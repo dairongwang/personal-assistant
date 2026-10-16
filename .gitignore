@@ -1,0 +1,89 @@
+# visual studio
+/.vs
+
+# python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+ 
+.venv/
+venv/
+env/
+ 
+# Build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+ 
+# Testing & coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage/
+.pytest_cache/
+ 
+# Type checkers / linters
+.mypy_cache/
+.ruff_cache/
+.pyre/
+ 
+# Jupyter
+.ipynb_checkpoints/
+ 
+# =========================
+# Node.js
+# =========================
+node_modules/
+ 
+# Common frontend build outputs
+.next/
+.nuxt/
+.svelte-kit/
+.parcel-cache/
+ 
+# Build artifacts
+dist/
+build/
+out/
+ 
+# Test coverage
+coverage/
+ 
+# =========================
+# Logs
+# =========================
+*.log
+logs/
+ 
+# =========================
+# IDEs & Editors
+# =========================
+.vscode/
+.idea/
+ 
+# =========================
+# Operating System Files
+# =========================
+.DS_Store
+Thumbs.db
+ 
+# =========================
+# Environment / Secrets
+# =========================
+.env
+.env.*
+!.env.example
+/Stock_DataLoad/bin
+/Stock_DataLoad/obj
+
+# =========================
+# Job search dashboard
+# =========================
+# Personal configuration and data stay local; the example config is committed.
+config/job_search_config.json
+config/site_registry.json
+config/*.bak
+*.db
+data/

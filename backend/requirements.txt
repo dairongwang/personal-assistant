@@ -1,0 +1,20 @@
+# Supported Python: 3.10 – 3.14 (tested on 3.12 and 3.14).
+#
+# Every pin below has prebuilt binary wheels for Windows / macOS / Linux on
+# CPython 3.10–3.14, so `pip install` never needs a Rust or C compiler.
+# (pydantic 2.9.x pinned pydantic-core 2.23.4, which had no wheel for
+#  Python 3.14 and therefore tried — and failed — to compile from source.)
+fastapi==0.143.0
+uvicorn[standard]==0.54.0
+sqlalchemy==2.0.54
+pydantic==2.14.1
+alembic==1.20.0
+# IANA timezone database for zoneinfo — Windows does not ship one; no-op on Linux/macOS.
+tzdata==2026.5
+
+# Not needed for the single-user, self-hosted deployment.
+# Re-add when authentication is implemented (see docs/TECH_DESIGN.md, F12):
+#   python-jose[cryptography]>=3.4.0   (3.3.0 has CVE-2024-33663 / CVE-2024-33664)
+#   bcrypt>=4.1                        (use directly; passlib 1.7.4 is unmaintained
+#                                       and incompatible with bcrypt>=4.1)
+#   python-multipart                   (only required for form/file uploads)

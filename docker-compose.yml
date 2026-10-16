@@ -1,0 +1,19 @@
+# Production-style deployment: one container, data on a named volume, restarts on reboot.
+#   docker compose -f docker-compose.yml up -d --build
+# (Running plain `docker compose up` also applies docker-compose.override.yml = dev mode.)
+services:
+  app:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: personal-assistant:latest
+    ports:
+      - "${PORT:-8000}:8000"
+    volumes:
+      - assistant_data:/app/data
+    environment:
+      - DEFAULT_TZ=${DEFAULT_TZ:-UTC}
+    restart: unless-stopped
+
+volumes:
+  assistant_data:

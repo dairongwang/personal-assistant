@@ -1,0 +1,9 @@
+# Development overrides (applied automatically by `docker compose up`):
+# live-reload on source changes, code bind-mounted from the host.
+services:
+  app:
+    volumes:
+      - ./backend:/app
+      - ./frontend:/frontend:ro
+      - assistant_data:/app/data
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app --reload-dir /frontend

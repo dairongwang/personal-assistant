@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Personal Assistant</title>
+  <meta name="description" content="Tasks, events and a daily summary — on every device.">
+  <meta name="theme-color" content="#4f46e5" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#171a21" media="(prefers-color-scheme: dark)">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Assistant">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="/css/app.css">
+</head>
+<body>
+  <div class="app">
+    <header class="app-header">
+      <div>
+        <h1>Personal Assistant</h1>
+        <p class="subtitle" id="today-date"></p>
+      </div>
+      <div class="header-actions">
+        <button class="btn desktop-only" id="btn-new-event" type="button">+ Event</button>
+        <button class="btn primary desktop-only" id="btn-new-task" type="button">+ Task</button>
+      </div>
+    </header>
+
+    <div class="banner warn" id="banner-offline" hidden>
+      <span>You're offline — showing the last data this device saw. Changes need a connection.</span>
+    </div>
+    <div class="banner" id="banner-update" hidden>
+      <span>A new version is available.</span>
+      <button class="btn primary" id="btn-update" type="button">Reload</button>
+    </div>
+
+    <section class="summary" aria-label="Today summary">
+      <div class="card stat open"><span class="value" id="stat-open">–</span><span class="label">Open tasks</span></div>
+      <div class="card stat due"><span class="value" id="stat-due">–</span><span class="label">Due today</span></div>
+      <div class="card stat overdue"><span class="value" id="stat-overdue">–</span><span class="label">Overdue</span></div>
+      <div class="card stat done"><span class="value" id="stat-done">–</span><span class="label">Done today</span></div>
+    </section>
+
+    <main class="layout">
+      <section class="card" aria-labelledby="tasks-heading">
+        <div class="card-header">
+          <h2 id="tasks-heading">Tasks</h2>
+          <div class="toolbar">
+            <input class="input search" id="search" type="search" placeholder="Search…" aria-label="Search tasks" autocomplete="off">
+            <select class="input" id="filter-status" aria-label="Filter by status">
+              <option value="">All</option>
+              <option value="todo">To do</option>
+              <option value="in_progress">In progress</option>
+              <option value="done">Done</option>
+            </select>
+          </div>
+        </div>
+        <ul class="list" id="task-list" aria-live="polite"></ul>
+        <p class="empty" id="tasks-empty" hidden>No tasks yet. Tap + to add one.</p>
+      </section>
+
+      <aside class="sidebar">
+        <section class="card" aria-labelledby="events-heading">
+          <div class="card-header">
+            <h2 id="events-heading">Today's events</h2>
+            <button class="btn ghost" id="btn-new-event-side" type="button" aria-label="New event">+ Add</button>
+          </div>
+          <div id="event-list"></div>
+          <p class="empty" id="events-empty" hidden>No events today</p>
+        </section>
+
+        <section class="card" id="overdue-card" aria-labelledby="overdue-heading" hidden>
+          <div class="card-header danger"><h2 id="overdue-heading">Overdue</h2></div>
+          <div id="overdue-list"></div>
+        </section>
+      </aside>
+    </main>
+  </div>
+
+  <button class="fab" id="fab-new-task" type="button" aria-label="New task">+</button>
+
+  <!-- Task dialog (create + edit) -->
+  <dialog id="task-dialog" aria-labelledby="task-dialog-title">
+    <form id="task-form" method="dialog">
+      <h3 id="task-dialog-title">New task</h3>
+      <div class="field">
+        <label for="task-title">Title</label>
+        <input class="input" id="task-title" name="title" required maxlength="500" autocomplete="off" placeholder="What needs doing?">
+      </div>
+      <div class="field">
+        <label for="task-description">Description <span class="sr-only">(optional)</span></label>
+        <textarea class="input" id="task-description" name="description" maxlength="5000" rows="2" placeholder="Optional"></textarea>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="task-priority">Priority</label>
+          <select class="input" id="task-priority" name="priority">
+            <option value="low">Low</option>
+            <option value="medium" selected>Medium</option>
+            <option value="high">High</option>
+            <option value="urgent">Urgent</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="task-status">Status</label>
+          <select class="input" id="task-status" name="status">
+            <option value="todo">To do</option>
+            <option value="in_progress">In progress</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="task-due">Due</label>
+          <input class="input" id="task-due" name="due_date" type="datetime-local">
+        </div>
+        <div class="field">
+          <label for="task-tags">Tags</label>
+          <input class="input" id="task-tags" name="tags" placeholder="home, work" autocomplete="off">
+        </div>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn danger" id="task-delete" type="button" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button class="btn" type="button" data-close>Cancel</button>
+        <button class="btn primary" id="task-save" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Event dialog (create + edit) -->
+  <dialog id="event-dialog" aria-labelledby="event-dialog-title">
+    <form id="event-form" method="dialog">
+      <h3 id="event-dialog-title">New event</h3>
+      <div class="field">
+        <label for="event-title">Title</label>
+        <input class="input" id="event-title" name="title" required maxlength="500" autocomplete="off">
+      </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="event-start">Starts</label>
+          <input class="input" id="event-start" name="start_time" type="datetime-local" required>
+        </div>
+        <div class="field">
+          <label for="event-end">Ends</label>
+          <input class="input" id="event-end" name="end_time" type="datetime-local" required>
+        </div>
+      </div>
+      <div class="field">
+        <label for="event-location">Location <span class="sr-only">(optional)</span></label>
+        <input class="input" id="event-location" name="location" maxlength="500" placeholder="Optional" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="event-description">Notes <span class="sr-only">(optional)</span></label>
+        <textarea class="input" id="event-description" name="description" maxlength="5000" rows="2" placeholder="Optional"></textarea>
+      </div>
+      <div class="dialog-actions">
+        <button class="btn danger" id="event-delete" type="button" hidden>Delete</button>
+        <span class="spacer"></span>
+        <button class="btn" type="button" data-close>Cancel</button>
+        <button class="btn primary" id="event-save" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/js/app.js" defer></script>
+</body>
+</html>

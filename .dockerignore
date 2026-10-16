@@ -1,0 +1,13 @@
+# Build context is the project root (see backend/Dockerfile).
+**/venv/
+**/.venv/
+**/__pycache__/
+**/*.pyc
+**/data/
+**/*.db
+**/*.db-*
+.git/
+docs/
+*.md
+**/.pytest_cache/
+**/.ruff_cache/
