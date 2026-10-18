@@ -1,0 +1,4 @@
+src/app/core/release-info.ts
+dist/
+.angular/
+node_modules/

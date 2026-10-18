@@ -1,19 +1,44 @@
-# Production-style deployment: one container, data on a named volume, restarts on reboot.
-#   docker compose -f docker-compose.yml up -d --build
-# (Running plain `docker compose up` also applies docker-compose.override.yml = dev mode.)
+# Everything on one machine: PostgreSQL + the service (which also serves the built PWA).
+#   docker compose up --build          → http://localhost:8000/
+# Set TOKEN_SECRET and RELEASE_ADMIN_TOKEN in a .env file next to this compose file for anything
+# beyond a quick try-out.
 services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: assistant
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-assistant}
+      POSTGRES_DB: assistant
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assistant -d assistant"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
   app:
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: services/account/Dockerfile
     image: personal-assistant:latest
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "${PORT:-8000}:8000"
-    volumes:
-      - assistant_data:/app/data
     environment:
-      - DEFAULT_TZ=${DEFAULT_TZ:-UTC}
+      APP_ENV: ${APP_ENV:-dev}
+      DATABASE_URL: postgresql+psycopg://assistant:${POSTGRES_PASSWORD:-assistant}@db:5432/assistant
+      TOKEN_SECRET: ${TOKEN_SECRET:-dev-only-change-me}
+      RELEASE_ADMIN_TOKEN: ${RELEASE_ADMIN_TOKEN:-dev-admin-token}
+      BILLING_WEBHOOK_SECRET: ${BILLING_WEBHOOK_SECRET:-dev-webhook-secret}
+      # First administrator(s): register/sign in with one of these e-mails in the app.
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-}
+      # Fake test accounts (free@/pro@/admin@example.com …); ignored when APP_ENV=prod.
+      SEED_FAKE_ACCOUNTS: ${SEED_FAKE_ACCOUNTS:-true}
     restart: unless-stopped
 
 volumes:
-  assistant_data:
+  pgdata:

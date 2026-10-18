@@ -1,4 +1,4 @@
-# Build context is the project root (see backend/Dockerfile).
+# Build context is the project root (see services/account/Dockerfile).
 **/venv/
 **/.venv/
 **/__pycache__/
@@ -6,7 +6,11 @@
 **/data/
 **/*.db
 **/*.db-*
+**/node_modules/
+**/dist/
+**/.angular/
 .git/
+.pgdata/
 docs/
 *.md
 **/.pytest_cache/

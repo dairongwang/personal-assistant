@@ -5,9 +5,22 @@ management · Deployment & automated testing
 
 | | |
 |---|---|
-| Status | Draft for review |
-| Supersedes | `TECH_DESIGN.md` §4.2–4.9 (server-held data model); `MOBILE_DEPLOYMENT.md` §1–2 (self-hosted access). Feature roadmap in `TECH_DESIGN.md` §3 still applies. |
+| Status | Adopted — Phase A/B implemented (see "Implementation status" below) |
+| Supersedes | `TECH_DESIGN.md` §4.2–4.9 (server-held data model). Feature roadmap in `TECH_DESIGN.md` §3 still applies. |
 | Hard requirement | **The only user information stored on company servers is the minimum needed for billing.** |
+
+> **Implementation status (this repository).** The local-first client is built with **Angular 21**
+> (not React as proposed in §2.1) — `apps/web`. Local storage is **IndexedDB via Dexie** with
+> version-controlled migrations (SQLite-wasm/OPFS from §2.1 can replace it behind the same
+> repository layer when native shells arrive). The Account Service (`services/account`, FastAPI +
+> PostgreSQL) implements auth (§3.2 with PBKDF2/HKDF pinned in `kdf_params`, Argon2id can be
+> swapped in), devices, entitlements, a stub billing provider behind the §1 adapter, the
+> encrypted op-log relay with ack-based deletion (§4.3), the opt-in vault (§4.4, **on by
+> default** because the product requirement is "server is master") and release manifests.
+> Sync ordering is **server-assigned `seq`, last writer by seq wins** rather than HLC — simpler,
+> deterministic, and it makes the server the master of order as required. Web Push (§4.6),
+> passkeys, Capacitor/Electron shells are not implemented yet. Application-update and migration
+> mechanics are specified in `UPDATES_AND_MIGRATIONS.md`.
 
 ---
 
@@ -171,9 +184,13 @@ metadata beyond byte counts.
 | **Capacitor** | iOS and Android store apps: local notifications (no server), share-sheet capture, widgets via native plugins, Keychain/Keystore, IAP | Phase C |
 | **Electron** *(only if needed)* | System tray, global quick-capture hotkey, auto-start, native notifications on Linux | Phase D, demand-driven. Electron chosen over Tauri deliberately: Tauri requires a Rust toolchain to build, which has already cost this team time; Electron is Node-only. Trade-off: ~150 MB installers. Revisit if size matters. |
 
-**Framework choice:** React + TypeScript + Vite. The current Alpine.js page cannot carry a
-multi-view, offline, encrypted product. React is chosen for ecosystem depth (Capacitor/Electron
-tooling, component libraries, testing) and hiring; Svelte would be an acceptable alternative.
+**Framework choice:** ~~React + TypeScript + Vite~~ → **Angular + TypeScript** (decided after this
+document was written; implemented in `apps/web`). Angular brings the service-worker package
+(`@angular/service-worker`) that drives the automatic-update mechanism, a batteries-included
+toolchain (CLI, Vitest, strict templates) and a single opinionated way of doing things, which
+suits a small team. The shell layering above is unchanged: the `core` logic (db, sync, crypto,
+update policy) has no Angular dependency beyond dependency injection and can be reused by
+Capacitor/Electron shells.
 
 **Storage:** SQLite everywhere — `@sqlite.org/sqlite-wasm` with OPFS in browsers (Safari ≥17,
 Chrome, Firefox ≥111), `@capacitor-community/sqlite` natively, `better-sqlite3` in Electron. One

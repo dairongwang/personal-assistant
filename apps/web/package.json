@@ -1,0 +1,41 @@
+{
+  "name": "personal-assistant-web",
+  "version": "1.0.0",
+  "scripts": {
+    "prepare-release": "node scripts/prepare-release.mjs",
+    "prestart": "node scripts/prepare-release.mjs",
+    "start": "ng serve --proxy-config proxy.conf.json",
+    "prebuild": "node scripts/prepare-release.mjs",
+    "build": "ng build",
+    "pretest": "node scripts/prepare-release.mjs",
+    "test": "ng test",
+    "lint": "prettier --check \"src/**/*.{ts,html,css}\" && tsc -p tsconfig.app.json --noEmit",
+    "format": "prettier --write \"src/**/*.{ts,html,css}\"",
+    "prelint": "node scripts/prepare-release.mjs"
+  },
+  "private": true,
+  "packageManager": "npm@10.9.4",
+  "dependencies": {
+    "@angular/common": "^21.2.0",
+    "@angular/compiler": "^21.2.0",
+    "@angular/core": "^21.2.0",
+    "@angular/forms": "^21.2.0",
+    "@angular/platform-browser": "^21.2.0",
+    "@angular/router": "^21.2.0",
+    "@angular/service-worker": "^21.2.0",
+    "dexie": "^4.4.6",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
+  "devDependencies": {
+    "@angular/build": "^21.2.24",
+    "@angular/cli": "^21.2.24",
+    "@angular/compiler-cli": "^21.2.0",
+    "@types/node": "^22.20.5",
+    "fake-indexeddb": "^6.0.0",
+    "jsdom": "^28.0.0",
+    "prettier": "^3.8.1",
+    "typescript": "~5.9.2",
+    "vitest": "^4.0.8"
+  }
+}

@@ -1,0 +1,413 @@
+<div class="app">
+  <header class="app-header">
+    <div>
+      <h1>Personal Assistant</h1>
+      <p class="subtitle">{{ todayLabel }}</p>
+    </div>
+    <div class="header-actions">
+      <button
+        class="btn icon"
+        id="btn-help"
+        type="button"
+        [attr.aria-pressed]="tooltips.helpMode()"
+        [class.active]="tooltips.helpMode()"
+        aria-label="Help tips"
+        (click)="toggleHelp()"
+        appTip="Help tips: turn this on, then tap any button or field to read what it does (on a computer, just hover over a control). You can also press and hold a control on a phone or tablet."
+      >
+        ?
+      </button>
+      <label
+        class="checkbox inline auto-update"
+        for="auto-update"
+        appTip="Install new versions of the app automatically (recommended). On: updates are downloaded in the background and installed when you reopen the app or as soon as you are not in the middle of something. Off: you are told when a version is ready and install it yourself with the Update button. Required security updates install either way."
+      >
+        <input
+          type="checkbox"
+          id="auto-update"
+          [checked]="update.autoUpdate()"
+          (change)="setAutoUpdate($any($event.target).checked)"
+        />
+        <span>Auto-update</span>
+      </label>
+      <button
+        class="btn icon"
+        id="btn-update"
+        type="button"
+        (click)="openUpdate()"
+        [attr.aria-label]="'Update. ' + update.tooltip()"
+        [class.attention]="update.attention()"
+        [class.error]="!!update.error()"
+        [class.busy]="update.swPhase() === 'downloading' || update.swPhase() === 'activating'"
+        [appTip]="update.tooltip()"
+      >
+        <span class="icon-glyph" aria-hidden="true">&#8635;</span
+        ><span class="update-label">Update</span>
+        <span class="update-dot" [hidden]="!update.attention()" aria-hidden="true"></span>
+      </button>
+      <button
+        class="btn icon membership"
+        id="btn-membership"
+        type="button"
+        (click)="openAccount()"
+        [class.limit]="!tasks.limit().allowed"
+        [appTip]="membershipTip()"
+        [attr.aria-label]="membershipTip()"
+        [attr.data-membership]="membership.type()"
+      >
+        <span class="icon-glyph" aria-hidden="true">{{
+          membership.type() === 'admin' ? '★' : membership.type() === 'paid' ? '◆' : '◇'
+        }}</span>
+        <span class="membership-label">{{ membershipBadge() }}</span>
+      </button>
+      @if (membership.isAdmin()) {
+        <button
+          class="btn icon"
+          id="btn-admin"
+          type="button"
+          (click)="openAdmin()"
+          appTip="Administration: accounts, memberships, devices and service health (administrators only)."
+        >
+          <span class="icon-glyph" aria-hidden="true">⚙</span
+          ><span class="update-label">Admin</span>
+        </button>
+      }
+      @if (account.signedIn()) {
+        <button
+          class="btn icon"
+          id="btn-account"
+          type="button"
+          (click)="openAccount()"
+          [class.attention]="sync.state() === 'error' || sync.state() === 'update_required'"
+          [appTip]="accountTip()"
+          [attr.aria-label]="accountTip()"
+        >
+          <span class="icon-glyph" aria-hidden="true">{{
+            sync.state() === 'syncing' ? '⟳' : '☁'
+          }}</span>
+          <span class="update-label">Sync</span>
+          <span
+            class="update-dot"
+            [hidden]="!(sync.state() === 'error' || sync.state() === 'update_required')"
+            aria-hidden="true"
+          ></span>
+        </button>
+        <button
+          class="btn"
+          id="btn-logout"
+          type="button"
+          (click)="logout()"
+          [disabled]="account.busy()"
+          [appTip]="
+            'Log out of ' +
+            (account.session()?.email ?? 'your account') +
+            ' on this device. Your data stays on this device; sign in again to sync.'
+          "
+        >
+          Log out
+        </button>
+      } @else {
+        <button
+          class="btn"
+          id="btn-login"
+          type="button"
+          (click)="openAccount('login')"
+          appTip="Sign in to an existing account to sync your data between devices (end-to-end encrypted)."
+        >
+          Log in
+        </button>
+        <button
+          class="btn"
+          id="btn-register"
+          type="button"
+          (click)="openAccount('register')"
+          appTip="Create a free account. Optional — everything already works on this device without one."
+        >
+          Register
+        </button>
+      }
+      <button
+        class="btn desktop-only"
+        id="btn-new-event"
+        type="button"
+        (click)="openEvent()"
+        appTip="Add an event to today's calendar, with start/end time and location. Keyboard shortcut: E"
+      >
+        + Event
+      </button>
+      <button
+        class="btn primary desktop-only"
+        id="btn-new-task"
+        type="button"
+        (click)="openTask()"
+        appTip="Create a new task with priority, due date and tags. Keyboard shortcut: N"
+      >
+        + Task
+      </button>
+    </div>
+  </header>
+
+  @if (!online()) {
+    <div class="banner warn">
+      <span>You're offline — everything you do is saved on this device and synced later.</span>
+    </div>
+  }
+  @if (updateBannerVisible()) {
+    <div class="banner" id="banner-update">
+      <span>Version {{ update.decision().availableVersion }} is downloaded and ready.</span>
+      <button
+        class="btn primary"
+        id="btn-reload"
+        type="button"
+        (click)="update.applyNow()"
+        appTip="Install the new version now. The app reloads; nothing you've saved is lost."
+      >
+        Install
+      </button>
+    </div>
+  }
+  @if (update.swPhase() === 'downloading') {
+    <div class="banner" id="banner-update-progress">
+      <span>Downloading version {{ update.decision().availableVersion }} in the background…</span>
+      <button
+        class="btn"
+        type="button"
+        (click)="openUpdate()"
+        appTip="Show update progress and details."
+      >
+        Details
+      </button>
+    </div>
+  }
+
+  <section class="summary" aria-label="Today summary">
+    <div class="card stat open" tabindex="0" appTip="How many tasks are not done yet (all dates).">
+      <span class="value" id="stat-open">{{ today.summary().totalOpen }}</span
+      ><span class="label">Open tasks</span>
+    </div>
+    <div
+      class="card stat due"
+      tabindex="0"
+      appTip="Open tasks whose due date is today, in your timezone."
+    >
+      <span class="value" id="stat-due">{{ today.summary().dueToday.length }}</span
+      ><span class="label">Due today</span>
+    </div>
+    <div
+      class="card stat overdue"
+      tabindex="0"
+      appTip="Open tasks whose due date has already passed. They are listed in the Overdue panel so you can reschedule or finish them."
+    >
+      <span class="value" id="stat-overdue">{{ today.summary().overdue.length }}</span
+      ><span class="label">Overdue</span>
+    </div>
+    <div class="card stat done" tabindex="0" appTip="Tasks you marked as done today.">
+      <span class="value" id="stat-done">{{ today.summary().completedToday }}</span
+      ><span class="label">Done today</span>
+    </div>
+  </section>
+
+  <main class="layout">
+    <section class="card" aria-labelledby="tasks-heading">
+      <div class="card-header">
+        <h2 id="tasks-heading">
+          Tasks
+          <span
+            class="muted small task-usage"
+            id="task-usage"
+            [class.limit]="!tasks.limit().allowed"
+            [appTip]="membershipTip()"
+            >{{ tasks.usageLabel() }}</span
+          >
+        </h2>
+        <div class="toolbar">
+          <input
+            class="input search"
+            id="search"
+            type="search"
+            placeholder="Search…"
+            aria-label="Search tasks"
+            autocomplete="off"
+            [ngModel]="tasks.search()"
+            (ngModelChange)="tasks.search.set($event)"
+            appTip="Type to find tasks by title or description. Results update as you type. Keyboard shortcut: /"
+          />
+          <select
+            class="input"
+            id="filter-status"
+            aria-label="Filter by status"
+            [ngModel]="tasks.filterStatus()"
+            (ngModelChange)="onFilter($event)"
+            appTip="Show all tasks, or only those that are To do, In progress or Done."
+          >
+            <option value="">All</option>
+            <option value="todo">To do</option>
+            <option value="in_progress">In progress</option>
+            <option value="done">Done</option>
+          </select>
+        </div>
+      </div>
+      <ul class="list" id="task-list" aria-live="polite">
+        @for (task of tasks.visible(); track task.id) {
+          <li class="task" [class.done]="task.status === 'done'" [attr.data-id]="task.id">
+            <button
+              class="check"
+              type="button"
+              [attr.aria-pressed]="task.status === 'done'"
+              (click)="toggle(task)"
+              [attr.aria-label]="checkLabel(task)"
+              [appTip]="
+                task.status === 'done'
+                  ? 'Tap to mark this task as not done again.'
+                  : 'Tap to mark this task as done.'
+              "
+            >
+              <span class="box"
+                ><svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M5 13l4 4L19 7" /></svg
+              ></span>
+            </button>
+            <button
+              class="task-main"
+              type="button"
+              (click)="openTask(task)"
+              [attr.aria-label]="'Edit task ' + task.title"
+              appTip="Open this task to edit its title, priority, due date or tags — or to delete it."
+            >
+              <span class="task-title">{{ task.title }}</span>
+              @if (task.description) {
+                <span class="task-desc">{{ task.description }}</span>
+              }
+              <span class="task-meta">
+                <span class="badge" [class]="'badge ' + task.priority">{{ task.priority }}</span>
+                @if (task.status === 'in_progress') {
+                  <span class="badge in_progress">in progress</span>
+                }
+                @for (tag of task.tags; track tag) {
+                  <span class="chip">{{ tag }}</span>
+                }
+                @if (task.dueAt && task.status !== 'done') {
+                  <span class="due" [class]="'due ' + formatDue(task.dueAt).cls"
+                    >Due {{ formatDue(task.dueAt).label }}</span
+                  >
+                }
+              </span>
+            </button>
+          </li>
+        }
+      </ul>
+      @if (tasks.loaded() && tasks.visible().length === 0) {
+        <p class="empty" id="tasks-empty">{{ emptyText() }}</p>
+      }
+    </section>
+
+    <aside class="sidebar">
+      <section class="card" aria-labelledby="events-heading">
+        <div class="card-header">
+          <h2 id="events-heading">Today's events</h2>
+          <button
+            class="btn ghost"
+            id="btn-new-event-side"
+            type="button"
+            aria-label="New event"
+            (click)="openEvent()"
+            appTip="Add an event to your calendar."
+          >
+            + Add
+          </button>
+        </div>
+        <div id="event-list">
+          @for (ev of today.summary().upcomingEvents; track ev.id) {
+            <div class="item">
+              <button
+                type="button"
+                (click)="openEvent(ev)"
+                [attr.aria-label]="'Edit event ' + ev.title"
+                appTip="Open this event to change its time, location or notes, or to delete it."
+              >
+                <span class="title">{{ ev.title }}</span>
+                <span class="sub"
+                  >{{ formatEventTime(ev.startAt, ev.endAt)
+                  }}{{ ev.location ? ' · ' + ev.location : '' }}</span
+                >
+              </button>
+            </div>
+          }
+        </div>
+        @if (today.summary().upcomingEvents.length === 0) {
+          <p class="empty" id="events-empty">No events today</p>
+        }
+      </section>
+
+      @if (today.summary().overdue.length) {
+        <section class="card" id="overdue-card" aria-labelledby="overdue-heading">
+          <div class="card-header danger"><h2 id="overdue-heading">Overdue</h2></div>
+          <div id="overdue-list">
+            @for (t of today.summary().overdue; track t.id) {
+              <div class="item">
+                <button
+                  type="button"
+                  (click)="openTask(t)"
+                  [attr.aria-label]="'Edit task ' + t.title"
+                  appTip="This task is past its due date. Open it to pick a new date or mark it done."
+                >
+                  <span class="title">{{ t.title }}</span>
+                  <span class="sub">Due {{ formatDue(t.dueAt!).label }}</span>
+                </button>
+              </div>
+            }
+          </div>
+        </section>
+      }
+    </aside>
+  </main>
+  <p class="footer muted small">
+    v{{ version }} · your data stays on this device{{
+      account.signedIn() ? ' · synced end-to-end encrypted' : ''
+    }}
+  </p>
+</div>
+
+<button
+  class="fab"
+  id="fab-new-task"
+  type="button"
+  aria-label="New task"
+  (click)="openTask()"
+  appTip="Create a new task."
+>
+  +
+</button>
+
+<app-task-dialog (upgrade)="openAccount()" />
+<app-event-dialog />
+<app-update-dialog />
+<app-account-dialog />
+<app-admin-dialog />
+<app-forced-update />
+
+<!-- popover="manual" puts these in the top layer so they show above open dialogs. -->
+<div
+  #toastHost
+  class="toast"
+  [class.error]="toast.current()?.error"
+  id="toast"
+  role="status"
+  aria-live="polite"
+  popover="manual"
+>
+  {{ toast.current()?.message }}
+</div>
+<div
+  #tooltipHost
+  class="tooltip"
+  id="tooltip"
+  role="tooltip"
+  popover="manual"
+  hidden
+  [attr.data-placement]="tooltips.placement()"
+  [style.top.px]="tooltips.position().top"
+  [style.left.px]="tooltips.position().left"
+>
+  {{ tooltips.text() }}
+</div>
