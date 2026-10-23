@@ -7,13 +7,37 @@ ALLOWED_TABLES = {
     "devices",
     "subscriptions",
     "billing_events",
+    "payments",  # the ledger: amount, status, refund and period per charge — money metadata, never card data
     "sync_ops",
     "sync_snapshots",
     "releases",
     "audit_log",  # admin actions: who changed which account's membership/role — metadata only
+    "ad_campaigns",  # our creatives (docs/ADVERTISING.md) — nothing about users
+    "ad_daily_stats",  # anonymous totals per ad × day × coarse region — no identifiers by construction
+    "app_settings",  # operator settings changed from the admin panel (active ad source) — no user data
 }
 FORBIDDEN_COLUMN_WORDS = ("title", "description", "note", "body", "content", "location", "tag", "due", "task")
 ALLOWED_COLUMN_NAMES = {"provider_event_id", "notes"}  # billing idempotency key; release notes (ours, not the user's)
+# The sponsored-content tables must never grow a way to single out a person, a device or a request.
+AD_TABLES = ("ad_campaigns", "ad_daily_stats")
+AD_FORBIDDEN_COLUMN_WORDS = (
+    "account",
+    "device",
+    "user",
+    "ip",
+    "agent",
+    "session",
+    "cookie",
+    "fingerprint",
+    "email",
+    "token",
+    "lat",
+    "lon",
+    "city",
+    "postal",
+    "zip",
+)
+AD_ALLOWED_COLUMN_NAMES = {"created_by"}  # the administrator who created the campaign (staff, not a user)
 
 
 def test_no_content_tables_or_columns():
@@ -29,6 +53,39 @@ def test_no_content_tables_or_columns():
             )
         if table.name in ("sync_ops", "sync_snapshots"):
             assert table.columns["ciphertext"].type.python_type is bytes
+
+
+def test_ad_tables_cannot_identify_anyone():
+    """Sponsored content is contextual: the daily counters are keyed by ad, day and coarse region
+    only, and neither table has a column that could name a viewer, device or request."""
+    for name in AD_TABLES:
+        table = models.Base.metadata.tables[name]
+        for column in table.columns:
+            col = column.name.lower()
+            if col in AD_ALLOWED_COLUMN_NAMES:
+                continue
+            assert not any(word in col for word in AD_FORBIDDEN_COLUMN_WORDS), f"{name}.{column.name}"
+    stats = models.Base.metadata.tables["ad_daily_stats"]
+    assert {c.name for c in stats.columns} == {"id", "ad_id", "day", "region", "impressions", "clicks"}
+    assert stats.columns["region"].type.length == 2  # a country, never anything finer
+    assert stats.columns["day"].type.python_type.__name__ == "date"  # a day, never a timestamp
+
+
+def test_ad_endpoints_take_and_return_no_identifiers(client):
+    """The public ad endpoints are anonymous by contract: no auth, and the request/response
+    schemas carry no account, device or location-precise fields."""
+    spec = client.get("/api/openapi.json").json()
+    for path in ("/api/v1/ads/serve", "/api/v1/ads/metrics"):
+        for op in spec["paths"][path].values():
+            assert not op.get("security"), f"{path} must not require a token"
+            names = {p["name"] for p in op.get("parameters", [])}
+            assert names <= {"region", "lang"}, names
+    schemas = spec["components"]["schemas"]
+    for name in ("AdCreative", "AdServeResponse", "AdEventIn", "AdEventsRequest"):
+        for prop in schemas[name]["properties"]:
+            assert not any(w in prop for w in ("account", "device", "user", "ip", "lat", "lon", "city", "token")), (
+                f"{name}.{prop}"
+            )
 
 
 def test_api_has_no_content_endpoints(client):

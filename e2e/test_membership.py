@@ -30,7 +30,8 @@ def sign_in(pg, email, password, existing=True):
     """Header buttons: Log in / Register are shown while anonymous; Sync / Log out once signed in."""
     assert pg.locator("#btn-logout").count() == 0
     pg.click("#btn-login" if existing else "#btn-register")
-    assert pg.inner_text("#account-dialog-title") == ("Sign in" if existing else "Create account")
+    # Wait for the dialog to show the requested mode (the title re-renders just after the click).
+    pg.wait_for_selector(f"#account-dialog-title:text-is('{'Sign in' if existing else 'Create account'}')")
     pg.fill("#acc-email", email)
     pg.fill("#acc-password", password)
     pg.click("#account-dialog button[type=submit]")
@@ -56,7 +57,10 @@ def test_free_limit_then_pro_unlimited(browser, server, releaser):
     assert pg.inner_text("#task-usage") == "3 of 3 active tasks"
     assert not add_task(pg, "One too many")
     assert pg.locator("#task-list .task").count() == 3
-    assert {c.split("?")[0] for c in api_calls} == {"release/manifest"}  # nothing else left the device
+    # Nothing else left the device: the release manifest and the anonymous, token-less
+    # sponsored-content calls (coarse region only — e2e/test_ads.py checks their contents).
+    assert {c.split("?")[0] for c in api_calls} <= {"release/manifest", "ads/serve", "ads/metrics"}
+    assert "release/manifest" in {c.split("?")[0] for c in api_calls}
     # Finishing a task frees a slot; re-opening it at the limit is refused.
     pg.click("#task-list li:has-text('Anonymous task 1') .check")
     pg.wait_for_timeout(300)
@@ -137,12 +141,17 @@ def test_administrator_manages_memberships(browser, server, releaser):
     admin.wait_for_timeout(300)
     assert badge(admin) == "★ Admin"
     assert add_task(admin, "Admin task")  # administrators have every Pro feature
+    account_requests = []
+    admin.on("request", lambda r: account_requests.append(r.url) if "/admin/accounts?" in r.url else None)
     admin.click("#btn-admin")
     admin.wait_for_selector("#admin-dialog .admin-stats")
     admin.fill("#admin-search", email)
     admin.press("#admin-search", "Enter")
     admin.wait_for_selector(f"#admin-accounts .admin-email:has-text('{email}')")
-    assert admin.locator("#admin-accounts > li").count() == 1
+    try:  # the filtered answer may land a moment after the unfiltered initial list
+        admin.wait_for_function("document.querySelectorAll('#admin-accounts > li').length === 1", timeout=5000)
+    except Exception as exc:  # noqa: BLE001 — report what the dialog actually asked for
+        raise AssertionError(f"search did not narrow the list; requests: {account_requests}") from exc
     admin.click("#admin-accounts .admin-row")
     admin.wait_for_selector("#admin-accounts .admin-detail")
     assert "Free (user)" in admin.inner_text("#admin-accounts .admin-detail")

@@ -33,11 +33,70 @@ services:
       DATABASE_URL: postgresql+psycopg://assistant:${POSTGRES_PASSWORD:-assistant}@db:5432/assistant
       TOKEN_SECRET: ${TOKEN_SECRET:-dev-only-change-me}
       RELEASE_ADMIN_TOKEN: ${RELEASE_ADMIN_TOKEN:-dev-admin-token}
-      BILLING_WEBHOOK_SECRET: ${BILLING_WEBHOOK_SECRET:-dev-webhook-secret}
+      # Payment methods (docs/DEPLOYMENT.md "Payments"): Stripe and PayPal buttons are always
+      # shown; a method works once its credentials + at least one price/plan id are set. Without
+      # them the built-in fakes answer (outside APP_ENV=prod only).
+      BILLING_METHODS: ${BILLING_METHODS:-}
+      BILLING_PROVIDER: ${BILLING_PROVIDER:-stripe}
+      BILLING_FAKE_PROVIDERS: ${BILLING_FAKE_PROVIDERS:-true}
+      # Prices (decimal, in BILLING_CURRENCY) and the flat Lifetime refund; subscriptions
+      # refund the unused days of the period on cancellation.
+      BILLING_CURRENCY: ${BILLING_CURRENCY:-USD}
+      PRICE_PRO_MONTHLY: ${PRICE_PRO_MONTHLY:-1.00}
+      PRICE_PRO_YEARLY: ${PRICE_PRO_YEARLY:-10.00}
+      PRICE_LIFETIME: ${PRICE_LIFETIME:-20.00}
+      REFUND_LIFETIME: ${REFUND_LIFETIME:-10.00}
+      # KPI alert thresholds of the admin payment dashboard (fractions; warn above, alert above 2×).
+      PAYMENT_ALERT_FAILURE_RATE: ${PAYMENT_ALERT_FAILURE_RATE:-0.10}
+      PAYMENT_ALERT_REFUND_RATE: ${PAYMENT_ALERT_REFUND_RATE:-0.25}
+      PAYMENT_ALERT_REVENUE_DROP: ${PAYMENT_ALERT_REVENUE_DROP:-0.30}
+      PAYMENT_ALERT_PAST_DUE: ${PAYMENT_ALERT_PAST_DUE:-5}
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      PAYPAL_ENV: ${PAYPAL_ENV:-sandbox}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_CLIENT_SECRET: ${PAYPAL_CLIENT_SECRET:-}
+      PAYPAL_WEBHOOK_ID: ${PAYPAL_WEBHOOK_ID:-}
+      PAYPAL_PLAN_PRO_MONTHLY: ${PAYPAL_PLAN_PRO_MONTHLY:-}
+      PAYPAL_PLAN_PRO_YEARLY: ${PAYPAL_PLAN_PRO_YEARLY:-}
       # First administrator(s): register/sign in with one of these e-mails in the app.
       ADMIN_EMAILS: ${ADMIN_EMAILS:-}
       # Fake test accounts (free@/pro@/admin@example.com …); ignored when APP_ENV=prod.
       SEED_FAKE_ACCOUNTS: ${SEED_FAKE_ACCOUNTS:-true}
+      # Sponsored content for free memberships (docs/ADVERTISING.md): kill switch, first-party
+      # image hosts (empty = text only), optional edge country header (empty = never use the IP).
+      ADS_ENABLED: ${ADS_ENABLED:-true}
+      ADS_IMAGE_HOSTS: ${ADS_IMAGE_HOSTS:-}
+      ADS_REGION_HEADER: ${ADS_REGION_HEADER:-}
+      # Ad source (internal|sponsored|affiliate|adsense|microsoft|network) and provider credentials;
+      # see services/account/.env.example. Fakes are off in APP_ENV=prod unless ADS_FAKE_PROVIDERS=true.
+      ADS_SOURCE: ${ADS_SOURCE:-sponsored}
+      ADS_FAKE_PROVIDERS: ${ADS_FAKE_PROVIDERS:-}
+      ADS_AFFILIATE_TAG: ${ADS_AFFILIATE_TAG:-}
+      ADS_ADSENSE_CLIENT: ${ADS_ADSENSE_CLIENT:-}
+      ADS_ADSENSE_SLOT: ${ADS_ADSENSE_SLOT:-}
+      ADS_MICROSOFT_SITE_ID: ${ADS_MICROSOFT_SITE_ID:-}
+      ADS_MICROSOFT_PUBLISHER_ID: ${ADS_MICROSOFT_PUBLISHER_ID:-}
+      ADS_MICROSOFT_AD_UNIT_ID: ${ADS_MICROSOFT_AD_UNIT_ID:-}
+      ADS_NETWORK_NAME: ${ADS_NETWORK_NAME:-}
+      ADS_NETWORK_JSON_URL: ${ADS_NETWORK_JSON_URL:-}
+      ADS_NETWORK_SCRIPT_URL: ${ADS_NETWORK_SCRIPT_URL:-}
+      # The ads admin console runs on its own origin (service below) → allow it and link to it.
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:${ADS_ADMIN_PORT:-8081}}
+      ADS_ADMIN_URL: ${ADS_ADMIN_URL:-http://localhost:${ADS_ADMIN_PORT:-8081}/}
+    restart: unless-stopped
+
+  # Separate advertising console for administrators (apps/ads-admin): static files + nginx,
+  # talks to the API across origins. http://localhost:8081/ — sign in with an administrator account.
+  ads-admin:
+    build:
+      context: ./apps/ads-admin
+      dockerfile: Dockerfile
+    image: personal-assistant-ads-admin:latest
+    ports:
+      - "${ADS_ADMIN_PORT:-8081}:8080"
+    environment:
+      ADS_ADMIN_API_BASE: ${ADS_ADMIN_API_BASE:-http://localhost:${PORT:-8000}}
     restart: unless-stopped
 
 volumes:

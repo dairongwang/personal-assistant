@@ -11,6 +11,9 @@ import {
 import { FormsModule } from '@angular/forms';
 import { AccountDialog } from './core/account/account-dialog';
 import { AccountService } from './core/account/account.service';
+import { AdInfoDialog } from './core/ads/ad-info-dialog';
+import { AdPanel } from './core/ads/ad-panel';
+import { AdsService } from './core/ads/ads.service';
 import { AdminDialog } from './core/admin/admin-dialog';
 import { EventsService } from './core/data/events.service';
 import { TasksService } from './core/data/tasks.service';
@@ -40,6 +43,8 @@ import { TaskDialog } from './features/dashboard/task-dialog';
     UpdateDialog,
     AccountDialog,
     AdminDialog,
+    AdPanel,
+    AdInfoDialog,
     ForcedUpdate,
   ],
   templateUrl: './app.html',
@@ -52,6 +57,7 @@ export class App implements AfterViewInit {
   readonly membership = inject(MembershipService);
   readonly sync = inject(SyncService);
   readonly update = inject(UpdateService);
+  readonly ads = inject(AdsService);
   readonly toast = inject(ToastService);
   readonly tooltips = inject(TooltipService);
   private readonly ui = inject(UiStateService);
@@ -71,6 +77,7 @@ export class App implements AfterViewInit {
   readonly updateDialog = viewChild.required(UpdateDialog);
   readonly accountDialog = viewChild.required(AccountDialog);
   readonly adminDialog = viewChild.required(AdminDialog);
+  readonly adInfoDialog = viewChild.required(AdInfoDialog);
   readonly tooltipHost = viewChild.required<ElementRef<HTMLElement>>('tooltipHost');
   readonly toastHost = viewChild.required<ElementRef<HTMLElement>>('toastHost');
 
@@ -148,11 +155,21 @@ export class App implements AfterViewInit {
     await this.account.init();
     this.sync.init();
     this.update.init();
+    this.ads.init();
 
     const params = new URLSearchParams(location.search);
     if (params.get('new') === 'task') {
       history.replaceState(null, '', '/');
       setTimeout(() => this.taskDialog().open(), 50);
+    }
+    if (params.get('billing') === 'canceled') {
+      history.replaceState(null, '', '/');
+      this.toast.show('Checkout canceled — nothing was charged.');
+    }
+    if (params.get('billing') === 'managed') {
+      history.replaceState(null, '', '/');
+      await this.account.refreshMe();
+      this.toast.show('Billing details refreshed.');
     }
     if (params.get('billing') === 'done') {
       history.replaceState(null, '', '/');
@@ -206,6 +223,9 @@ export class App implements AfterViewInit {
   }
   openAdmin() {
     this.adminDialog().open();
+  }
+  openAdInfo() {
+    this.adInfoDialog().open();
   }
   openUpdate() {
     this.updateDialog().open();

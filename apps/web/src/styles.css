@@ -650,6 +650,12 @@ dialog h3 {
   flex: 1;
 }
 
+/* The page behind an open modal does not scroll (UiStateService toggles the class; the scroll
+   offset is kept, so closing the dialog returns to the same place). */
+body.dialog-open {
+  overflow: hidden;
+}
+
 /* Phones: bottom-sheet style dialogs */
 @media (max-width: 639px) {
   dialog {
@@ -1106,3 +1112,331 @@ dialog.wide {
   min-height: 36px;
   font-size: 0.85rem;
 }
+
+/* ---------- Sponsored content (core/ads) ----------
+   One small card at the end of the sidebar. Quiet by design: part of the page flow, no motion,
+   no overlay, muted colours — but unmistakably labelled. */
+
+/* The host is a grid item of the sidebar: without min-width: 0 its automatic minimum size
+   (the no-wrap header) would widen the whole column beyond a phone screen. */
+app-ad-panel {
+  display: block;
+  min-width: 0;
+}
+.ad-panel {
+  font-size: 0.9rem;
+  border-style: dashed;
+  box-shadow: none;
+  background: var(--surface);
+  min-width: 0;
+  max-width: 100%;
+}
+.ad-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap; /* narrow sidebar: the tool buttons drop to a second line, the sponsor stays readable */
+  gap: 4px 8px;
+  padding: 8px 12px;
+  min-height: 36px;
+}
+.ad-panel:not(.collapsed) .ad-head {
+  border-bottom: 1px solid var(--border);
+}
+.ad-tools {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+.ad-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: #fef3c7;
+  color: #78350f;
+  border: 1px solid #fcd34d;
+}
+@media (prefers-color-scheme: dark) {
+  .ad-badge {
+    background: #3a2a05;
+    color: #fde68a;
+    border-color: #92400e;
+  }
+}
+.ad-sponsor {
+  color: var(--text-2);
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+.ad-tool {
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 0.8rem;
+  padding: 4px 6px;
+  min-height: 28px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.ad-tool:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.ad-tool:focus-visible,
+.ad-dismiss:focus-visible,
+.ad-link:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.ad-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+}
+.ad-link {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  color: inherit;
+  text-decoration: none;
+  min-width: 0;
+  border-radius: 0 0 0 var(--radius);
+}
+.ad-link:hover {
+  background: var(--surface-2);
+}
+.ad-img {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border-radius: var(--radius-sm);
+  object-fit: cover;
+  background: var(--surface-2);
+}
+.ad-text {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.ad-headline {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ad-blurb {
+  color: var(--text-2);
+  font-size: 0.85rem;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.ad-cta {
+  color: var(--primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.ad-dismiss {
+  border: none;
+  background: transparent;
+  color: var(--text-3);
+  width: 36px;
+  height: 36px;
+  margin: 6px 6px 0 0;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 0.85rem;
+}
+.ad-dismiss:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+/* Targeting row — the country + language the creative was picked for, highlighted. */
+.ad-target {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px 0;
+  font-size: 0.85rem;
+  color: var(--text-2);
+}
+.ad-target-label {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 0.7rem;
+}
+.ad-hl {
+  background: #fde68a;
+  color: #451a03;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.ad-plus {
+  font-weight: 700;
+  color: var(--text);
+}
+.ad-target-source {
+  width: 100%;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+@media (prefers-color-scheme: dark) {
+  .ad-hl {
+    background: #854d0e;
+    color: #fef3c7;
+  }
+}
+.ad-debug {
+  padding: 0 12px 10px;
+  font-size: 0.75rem;
+}
+.ad-fake {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  background: var(--danger-soft);
+  color: var(--danger);
+  border: 1px solid var(--danger);
+}
+.ad-disclosure {
+  display: block;
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: var(--text-3);
+}
+.ad-disclosure.prominent {
+  color: var(--text-2);
+  font-weight: 550;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+}
+/* Third-party slots (AdSense / Microsoft / network tags) and their consent card. */
+.ad-body-embed {
+  display: block;
+  padding: 12px;
+}
+.ad-slot {
+  min-height: 90px;
+}
+.ad-slot-status {
+  margin-top: 6px;
+  font-size: 0.75rem;
+}
+.ad-consent {
+  display: grid;
+  gap: 10px;
+  font-size: 0.9rem;
+  color: var(--text-2);
+}
+.ad-consent a {
+  color: var(--primary);
+}
+.ad-consent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ad-consent-actions .btn {
+  min-height: 36px;
+  font-size: 0.85rem;
+}
+.ad-empty {
+  padding: 16px 12px;
+  color: var(--text-2);
+  display: grid;
+  gap: 6px;
+  flex: 1;
+}
+.ad-empty code {
+  font-size: 0.85em;
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* Large showcase layout (default; Why this? → "Large panel"): about a third of the page — the
+   sidebar column is one third of the width on desktop, and the card fills a third of the height. */
+.ad-panel.large:not(.collapsed) {
+  min-height: 33dvh;
+  display: flex;
+  flex-direction: column;
+  border-style: solid;
+  border-width: 2px;
+  border-color: #fcd34d;
+  box-shadow: var(--shadow);
+}
+.ad-panel.large:not(.collapsed) .ad-body {
+  flex: 1;
+}
+.ad-panel.large .ad-slot {
+  min-height: 160px;
+}
+.ad-panel.large .ad-badge {
+  font-size: 0.85rem;
+  padding: 3px 12px;
+}
+.ad-panel.large .ad-target {
+  font-size: 1rem;
+  padding-top: 14px;
+}
+.ad-panel.large .ad-hl {
+  font-size: 1.05rem;
+  padding: 4px 14px;
+}
+.ad-panel.large .ad-link {
+  padding: 16px 12px;
+  gap: 16px;
+}
+.ad-panel.large .ad-headline {
+  font-size: 1.25rem;
+  line-height: 1.25;
+}
+.ad-panel.large .ad-blurb {
+  font-size: 1rem;
+  -webkit-line-clamp: 4;
+}
+.ad-panel.large .ad-cta {
+  font-size: 1rem;
+  margin-top: 8px;
+}
+.ad-panel.large .ad-img {
+  width: 72px;
+  height: 72px;
+}
+
+/* Phones: the sidebar stacks under the task list, so the panel sits at the very end of the page
+   (the body's bottom padding already keeps it clear of the floating + button). */
+/* Text links styled as plain underlined text (footer "sponsored content", "Withdraw"). */
+.footer .link,
+dialog .link {
+  border: none;
+  background: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.footer .link:hover,
+dialog .link:hover {
+  color: var(--text);
+}
+
+/* (Sponsored-content administration moved to the separate ads admin console, apps/ads-admin.) */

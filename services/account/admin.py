@@ -11,16 +11,20 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 import accounts
+import ad_analytics
+import ad_sources
+import ads
 import auth
 import billing
 import config
 import membership
 import models
+import payment_analytics
 import releases
 import schemas
 from database import get_db
@@ -110,6 +114,7 @@ def stats(db: Session = Depends(get_db)):
         latest_release=latest.version if latest else None,
         service_version=config.SERVICE_VERSION,
         database="postgresql" if config.IS_POSTGRES else "sqlite",
+        ads_admin_url=config.ADS_ADMIN_URL,
     )
 
 
@@ -282,6 +287,209 @@ def delete_account(account_id: str, p: auth.Principal = Depends(auth.admin_princ
         accounts.purge(db, account)
         db.commit()
     return Response(status_code=204)
+
+
+# ---------------------------------------------------------------------------- sponsored content
+
+
+def _get_ad(db: Session, ad_id: str) -> models.AdCampaign:
+    ad = db.get(models.AdCampaign, ad_id)
+    if not ad:
+        raise HTTPException(status_code=404, detail="Campaign not found.")
+    return ad
+
+
+@router.get("/ads/overview", response_model=schemas.AdOverview)
+def ads_overview(db: Session = Depends(get_db)):
+    ads.prune_stats(db)
+    return ads.overview(db)
+
+
+@router.get("/ads/analytics", response_model=schemas.AdAnalytics)
+def ads_analytics(
+    days: int = Query(default=30, ge=1, le=400),
+    kind: str = Query(default="", pattern="^(|internal|sponsored|affiliate)$"),
+    db: Session = Depends(get_db),
+):
+    """Performance across campaigns: totals vs. the previous window, per day, per source kind,
+    per country (small counts folded into "other"), per campaign."""
+    ads.prune_stats(db)
+    return ad_analytics.analytics(db, days, kind or None)
+
+
+@router.get("/ads/analytics.csv", response_class=Response)
+def ads_analytics_csv(days: int = Query(default=30, ge=1, le=400), db: Session = Depends(get_db)):
+    """Aggregate export (day × campaign × country, suppression applied) for sponsors and auditors."""
+    body = ad_analytics.export_csv(db, days)
+    return Response(
+        body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="ad-performance-{days}d.csv"'},
+    )
+
+
+# ---------------------------------------------------------------------------- payments
+
+
+METHOD_PATTERN = "^[a-z_]{0,32}$"
+STATUS_PATTERN = "^(|succeeded|failed|refunded|partially_refunded)$"
+
+
+@router.get("/payments/analytics", response_model=schemas.PaymentAnalytics)
+def payment_analytics_view(
+    since: str = Query(default="", pattern=r"^(|\d{4}-\d{2}-\d{2})$"),
+    until: str = Query(default="", pattern=r"^(|\d{4}-\d{2}-\d{2})$"),
+    days: int = Query(default=30, ge=1, le=1100),
+    method: str = Query(default="", pattern=METHOD_PATTERN),
+    status: str = Query(default="", pattern=STATUS_PATTERN),
+    db: Session = Depends(get_db),
+):
+    """Revenue, transactions, successes/failures, refunds and average value for a date range
+    (explicit since/until or the last `days`), per day / status / method / plan, the top
+    customers, the refunds, and the KPI alerts — optionally narrowed to one method and status."""
+    start, end = payment_analytics.window(since or None, until or None, days)
+    return payment_analytics.analytics(db, start, end, method or None, status or None)
+
+
+@router.get("/payments/transactions", response_model=schemas.AdminTransactionPage)
+def payment_transactions(
+    since: str = Query(default="", pattern=r"^(|\d{4}-\d{2}-\d{2})$"),
+    until: str = Query(default="", pattern=r"^(|\d{4}-\d{2}-\d{2})$"),
+    days: int = Query(default=30, ge=1, le=1100),
+    method: str = Query(default="", pattern=METHOD_PATTERN),
+    status: str = Query(default="", pattern=STATUS_PATTERN),
+    q: str = Query(default="", max_length=120),
+    limit: int = Query(default=50, ge=1, le=500),
+    offset: int = Query(default=0, ge=0),
+    db: Session = Depends(get_db),
+):
+    """The transactions behind the analytics (drill-down), newest first; `q` matches the
+    customer's e-mail, the provider's payment id or the refund id."""
+    start, end = payment_analytics.window(since or None, until or None, days)
+    return payment_analytics.transactions(db, start, end, method or None, status or None, q or None, limit, offset)
+
+
+@router.get("/payments/transactions/{payment_id}", response_model=schemas.AdminTransactionDetail)
+def payment_transaction(payment_id: int, db: Session = Depends(get_db)):
+    """One transaction with its customer's account/subscription state and payment history."""
+    return payment_analytics.transaction(db, payment_id)
+
+
+@router.get("/payments/transactions.csv", response_class=Response)
+def payment_transactions_csv(
+    since: str = Query(default="", pattern=r"^(|\d{4}-\d{2}-\d{2})$"),
+    until: str = Query(default="", pattern=r"^(|\d{4}-\d{2}-\d{2})$"),
+    days: int = Query(default=30, ge=1, le=1100),
+    method: str = Query(default="", pattern=METHOD_PATTERN),
+    status: str = Query(default="", pattern=STATUS_PATTERN),
+    db: Session = Depends(get_db),
+):
+    """The filtered transactions as CSV (for accounting)."""
+    start, end = payment_analytics.window(since or None, until or None, days)
+    body = payment_analytics.export_csv(db, start, end, method or None, status or None)
+    return Response(
+        body,
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="payments-{start}-{end}.csv"'},
+    )
+
+
+@router.get("/ads/compliance", response_model=schemas.AdCompliance)
+def ads_compliance(request: Request, db: Session = Depends(get_db)):
+    """Live privacy checks against configuration and database, mapped to privacy regimes worldwide."""
+    return ad_analytics.compliance(db, request.app)
+
+
+@router.get("/ads/sources", response_model=schemas.AdSourcesOut)
+def ads_sources(db: Session = Depends(get_db)):
+    """Every ad source this deployment knows, with its mode (fake / live / unavailable) and the active one."""
+    active = ad_sources.active_kind(db)
+    return schemas.AdSourcesOut(
+        active=active,
+        fakes_enabled=config.ADS_FAKE_PROVIDERS,
+        sources=[ad_sources.admin_out(info, active) for info in ad_sources.describe_all()],
+    )
+
+
+@router.put("/ads/sources", response_model=schemas.AdSourcesOut)
+def ads_set_source(
+    body: schemas.AdSourceUpdate, p: auth.Principal = Depends(auth.admin_principal), db: Session = Depends(get_db)
+):
+    """Switch the active ad source at runtime (overrides ADS_SOURCE until changed again). Audited."""
+    info = ad_sources.describe(body.kind)
+    if info.mode == "unavailable":
+        raise HTTPException(status_code=409, detail=f"{ad_sources.TITLES[body.kind]} is not configured: {info.reason}")
+    before = ad_sources.active_kind(db)
+    if before != body.kind:
+        ad_sources.set_active(db, body.kind)
+        accounts.audit(db, p.account, "ad.source", before=before, after=body.kind, mode=info.mode)
+        db.commit()
+    return ads_sources(db)
+
+
+@router.get("/ads", response_model=list[schemas.AdCampaignOut])
+def ads_list(include_archived: bool = False, db: Session = Depends(get_db)):
+    stmt = select(models.AdCampaign).order_by(models.AdCampaign.created_at.desc())
+    if not include_archived:
+        stmt = stmt.where(models.AdCampaign.status != "archived")
+    return [ads.admin_out(a) for a in db.execute(stmt).scalars()]
+
+
+@router.post("/ads", response_model=schemas.AdCampaignOut, status_code=201)
+def ads_create(
+    body: schemas.AdCampaignIn, p: auth.Principal = Depends(auth.admin_principal), db: Session = Depends(get_db)
+):
+    ad = models.AdCampaign(created_by=p.account.id)
+    try:
+        ads.apply_input(ad, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    db.add(ad)
+    db.flush()
+    accounts.audit(db, p.account, "ad.create", ad_id=ad.id, sponsor=ad.sponsor, headline=ad.headline, status=ad.status)
+    db.commit()
+    return ads.admin_out(ad)
+
+
+@router.get("/ads/{ad_id}", response_model=schemas.AdCampaignOut)
+def ads_get(ad_id: str, db: Session = Depends(get_db)):
+    return ads.admin_out(_get_ad(db, ad_id))
+
+
+@router.patch("/ads/{ad_id}", response_model=schemas.AdCampaignOut)
+def ads_update(
+    ad_id: str,
+    body: schemas.AdCampaignPatch,
+    p: auth.Principal = Depends(auth.admin_principal),
+    db: Session = Depends(get_db),
+):
+    ad = _get_ad(db, ad_id)
+    try:
+        changes = ads.apply_input(ad, body)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if ad.starts_at and ad.ends_at and ad.ends_at <= ad.starts_at:
+        raise HTTPException(status_code=422, detail="ends_at must be after starts_at.")
+    if changes:
+        accounts.audit(db, p.account, "ad.update", ad_id=ad.id, sponsor=ad.sponsor, changes=changes)
+        db.commit()
+    return ads.admin_out(ad)
+
+
+@router.delete("/ads/{ad_id}", response_model=schemas.AdCampaignOut)
+def ads_archive(ad_id: str, p: auth.Principal = Depends(auth.admin_principal), db: Session = Depends(get_db)):
+    """Archive (never hard-delete: the aggregate history keeps meaning)."""
+    ad = _get_ad(db, ad_id)
+    if ad.status != "archived":
+        accounts.audit(db, p.account, "ad.archive", ad_id=ad.id, sponsor=ad.sponsor, before=ad.status)
+        ad.status = "archived"
+        db.commit()
+    return ads.admin_out(ad)
+
+
+@router.get("/ads/{ad_id}/stats", response_model=schemas.AdStats)
+def ads_stats(ad_id: str, days: int = Query(default=30, ge=1, le=400), db: Session = Depends(get_db)):
+    return ads.stats(db, _get_ad(db, ad_id), days)
 
 
 @router.get("/audit", response_model=list[schemas.AdminAuditEntry])

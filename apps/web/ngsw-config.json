@@ -43,6 +43,7 @@
   "navigationUrls": [
     "/**",
     "!/**/*.*",
-    "!/api/**"
+    "!/api/**",
+    "!/ads-admin/**"
   ]
 }

@@ -9,9 +9,9 @@
  *
  * | Type      | Who                                  | Active tasks | Features                     |
  * |-----------|--------------------------------------|--------------|------------------------------|
- * | anonymous | no account — everything on device    | 3            | local app                    |
+ * | anonymous | no account — everything on device    | 3            | local app (sponsored panel)  |
  * | free      | account without a paid subscription  | 3            | + trial / subscribe          |
- * | paid      | Pro trial/active/grace, Lifetime     | unlimited    | + sync, vault, push, …       |
+ * | paid      | Pro trial/active/grace, Lifetime     | unlimited    | + sync, vault, push, ad_free |
  * | admin     | administrator (production support)   | unlimited    | everything paid + admin panel|
  *
  * The server owns the same table (services/account/membership.py) and sends its values with
@@ -25,16 +25,19 @@
  */
 
 export type MembershipType = 'anonymous' | 'free' | 'paid' | 'admin';
-export type Feature = 'sync' | 'vault' | 'push' | 'calendar_feed' | 'insights_full' | 'admin';
+export type Feature =
+  'sync' | 'vault' | 'push' | 'calendar_feed' | 'insights_full' | 'ad_free' | 'admin';
 
 /** Default limit for free memberships (server: FREE_MAX_ACTIVE_TASKS). */
 export const FREE_MAX_ACTIVE_TASKS = 3;
+/** `ad_free`: no sponsored-content panel (core/ads) — free memberships see it, Pro buys it away. */
 export const PAID_FEATURES: readonly Feature[] = [
   'sync',
   'vault',
   'push',
   'calendar_feed',
   'insights_full',
+  'ad_free',
 ];
 
 export interface TaskLimitCheck {

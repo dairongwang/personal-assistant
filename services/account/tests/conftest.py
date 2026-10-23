@@ -23,11 +23,12 @@ os.environ["DATA_DIR"] = _TMP
 os.environ["DATABASE_URL"] = os.environ.get("TEST_DATABASE_URL") or f"sqlite:///{Path(_TMP, 'test.db').as_posix()}"
 os.environ["TOKEN_SECRET"] = "test-secret"
 os.environ["RELEASE_ADMIN_TOKEN"] = "admin-token"
-os.environ["BILLING_WEBHOOK_SECRET"] = "whsec-test"
+os.environ["BILLING_FAKE_PROVIDERS"] = "false"  # test_fakes.py switches the built-in providers on explicitly
 os.environ["RELEASE_FILE"] = str(Path(_TMP, "missing-release.json"))  # no fallback manifest in tests
 os.environ.pop("CORS_ORIGINS", None)
 os.environ.pop("WEB_DIST", None)
 
+import ads  # noqa: E402
 import config  # noqa: E402
 import database  # noqa: E402
 import main  # noqa: E402
@@ -56,6 +57,9 @@ def _reset_schema() -> None:
 @pytest.fixture()
 def client():
     _reset_schema()
+    # The anonymous ad endpoints are rate-limited per caller; every test starts with a clean window.
+    ads.SERVE_LIMITER = ads.RateLimiter(ads.SERVE_LIMITER.limit, ads.SERVE_LIMITER.window)
+    ads.METRICS_LIMITER = ads.RateLimiter(ads.METRICS_LIMITER.limit, ads.METRICS_LIMITER.window)
     with TestClient(main.app) as c:
         yield c
 

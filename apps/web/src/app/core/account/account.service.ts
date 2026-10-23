@@ -28,11 +28,95 @@ export interface Entitlements {
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   trial_available: boolean;
+  /** Payment strategy holding the subscription: stripe | paypal | seed | admin | … */
+  provider: string;
+  /** Until when the paid membership lasts as things stand (null = Lifetime / nothing paid). */
+  access_until: string | null;
+  /** Renews automatically at access_until. */
+  renews: boolean;
+  /** POST /billing/cancel ends the membership now and refunds (GET /billing/cancel/preview). */
+  can_cancel: boolean;
+  /** The provider has a self-service page for this subscription (POST /billing/manage). */
+  can_manage: boolean;
+  /** The most recent charge — paid, failed or refunded. */
+  last_payment: PaymentOut | null;
   /** Membership type resolved by the server (strategy key): free | paid | admin. */
   membership: MembershipType;
   membership_label: string;
   /** null = unlimited */
   max_active_tasks: number | null;
+}
+
+export type Plan = 'pro_monthly' | 'pro_yearly' | 'lifetime';
+
+/** One way of paying, as the server's payment strategies describe themselves (/billing/methods). */
+export interface PaymentMethod {
+  /** Strategy key: stripe | paypal */
+  name: string;
+  label: string;
+  description: string;
+  plans: Plan[];
+  /** Nothing is charged (the provider's test mode or the built-in fake). */
+  sandbox: boolean;
+  /** The server's built-in fake of this provider answers (no credentials configured). */
+  fake: boolean;
+  /** False = the server has no credentials for it yet (checkout answers 503 with the reason). */
+  available: boolean;
+}
+
+/** One paid membership as sold (price from the server's PRICE_* settings, refund rule). */
+export interface PlanInfo {
+  id: Plan;
+  title: string;
+  /** Decimal string, e.g. "1.00" */
+  amount: string;
+  amount_cents: number;
+  currency: string;
+  interval: 'month' | 'year' | null;
+  period_days: number | null;
+  refund_rule: string;
+}
+
+export interface PaymentMethods {
+  methods: PaymentMethod[];
+  default: string | null;
+  plans: PlanInfo[];
+  currency: string;
+}
+
+/** One charge from the ledger: what was paid, failed or refunded. */
+export interface PaymentOut {
+  id: number;
+  provider: string;
+  plan: Plan;
+  amount: string;
+  currency: string;
+  status: 'succeeded' | 'failed' | 'refunded' | 'partially_refunded';
+  refunded: string;
+  refund_id: string | null;
+  failure_reason: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  paid_at: string;
+}
+
+/** What cancelling right now gives back. */
+export interface RefundPreview {
+  amount: string;
+  amount_cents: number;
+  currency: string;
+  basis: 'prorated' | 'flat' | 'none';
+  days_left: number | null;
+  days_total: number | null;
+  paid: string | null;
+  note: string;
+}
+
+export interface CancelResult {
+  entitlements: Entitlements;
+  refund: RefundPreview;
+  refund_id: string | null;
+  refunded_via: 'provider' | 'recorded' | 'none';
 }
 
 export interface DeviceOut {
@@ -250,14 +334,50 @@ export class AccountService {
     return ent;
   }
 
-  async checkout(plan: 'pro_monthly' | 'pro_yearly' | 'lifetime'): Promise<string> {
+  /** The payment methods the server offers right now (none = billing is not configured). */
+  async paymentMethods(): Promise<PaymentMethods> {
+    return this.api.get<PaymentMethods>('/billing/methods', { auth: false });
+  }
+
+  /** Starts a hosted checkout with the chosen payment method (undefined = the server's default)
+   *  and returns the page to send the browser to. */
+  async checkout(plan: Plan, method?: string): Promise<string> {
     const res = await this.api.post<{ checkout_url: string }>('/billing/checkout', {
       plan,
+      method: method ?? null,
       return_url: location.origin + '/?billing=done',
     });
-    return res.checkout_url.startsWith('/')
-      ? this.api.base.replace(/\/api\/v1$/, '') + res.checkout_url
-      : res.checkout_url;
+    return this.absolute(res.checkout_url);
+  }
+
+  /** What cancelling right now would refund (shown before asking for confirmation). */
+  async cancelPreview(): Promise<RefundPreview> {
+    return this.api.get<RefundPreview>('/billing/cancel/preview');
+  }
+
+  /** Ends the paid membership now and refunds (unused days of the period / the flat Lifetime amount). */
+  async cancelSubscription(): Promise<CancelResult> {
+    const result = await this.api.post<CancelResult>('/billing/cancel');
+    await this.refreshMe();
+    return result;
+  }
+
+  /** This account's charges, failures and refunds, newest first. */
+  async payments(): Promise<PaymentOut[]> {
+    return this.api.get<PaymentOut[]>('/billing/payments');
+  }
+
+  /** The provider's self-service page (payment method, invoices) for this subscription. */
+  async manageUrl(): Promise<string> {
+    const res = await this.api.post<{ url: string }>('/billing/manage', {
+      return_url: location.origin + '/?billing=managed',
+    });
+    return this.absolute(res.url);
+  }
+
+  /** Pages the API hosts itself (built-in provider fakes) come back as paths on the API origin. */
+  private absolute(url: string): string {
+    return url.startsWith('/') ? this.api.base.replace(/\/api\/v1$/, '') + url : url;
   }
 
   async setVault(enabled: boolean): Promise<void> {

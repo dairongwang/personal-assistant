@@ -3,10 +3,11 @@
     /api/v1/auth/*      register · login · logout · sign out everywhere
     /api/v1/me          account, devices, entitlements, settings, delete
     /api/v1/membership  the membership types (anonymous · free · paid · admin) and their limits
-    /api/v1/billing/*   checkout · sandbox · webhooks · trial
+    /api/v1/billing/*   methods · checkout · cancel (+preview) · payments · manage · webhooks/{stripe,paypal} · trial
     /api/v1/admin/*     stats · accounts · membership/role changes · audit   (administrators)
     /api/v1/sync/*      push · pull · ack · status · snapshot   (ciphertext relay)
     /api/v1/release/*   manifest · check · publish · history   (client update policy)
+    /api/v1/ads/*       serve · metrics   (first-party sponsored content for free memberships, anonymous)
     /api/v1/health
 
 It stores account + billing rows and relays end-to-end-encrypted sync operations. It holds no
@@ -18,10 +19,8 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -31,13 +30,17 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 import accounts
+import ad_sources
 import admin
+import ads
 import auth
 import billing
 import config
 import docs_gate
+import fakes
 import membership
 import models
+import payments
 import releases
 import schemas
 import sync
@@ -50,7 +53,7 @@ log = logging.getLogger("account")
 async def lifespan(app: FastAPI):
     init_db()
     # What this process decided from its environment — the first thing to check when "prod"
-    # behaviour (docs gate, no sandbox, no fake accounts) seems to be missing.
+    # behaviour (docs gate, no fake accounts) seems to be missing.
     print(
         f"Personal Assistant API v{config.SERVICE_VERSION} · APP_ENV={config.ENV} · "
         f"database={'postgresql' if config.IS_POSTGRES else 'sqlite'} · "
@@ -62,6 +65,9 @@ async def lifespan(app: FastAPI):
 
         with SessionLocal() as db:
             seed.seed(db, log=lambda fmt, *args: print(fmt % args, flush=True))
+            seed.seed_ads(db, log=lambda fmt, *args: print(fmt % args, flush=True))
+    with SessionLocal() as db:  # aggregate ad counters older than the retention window
+        ads.prune_stats(db)
     yield
 
 
@@ -261,11 +267,23 @@ def my_membership(p: auth.Principal = Depends(auth.current_principal), db: Sessi
 # ==================== Billing ====================
 
 
+@api.get("/billing/methods", response_model=schemas.PaymentMethods, tags=["billing"])
+def payment_methods():
+    """The payment methods a buyer can choose from (payments.py strategies that are configured)."""
+    return payments.catalog()
+
+
 @api.post("/billing/checkout", response_model=schemas.CheckoutResponse, tags=["billing"])
-def checkout(body: schemas.CheckoutRequest, p: auth.Principal = Depends(auth.current_principal)):
-    prov = billing.provider()
+def checkout(
+    body: schemas.CheckoutRequest, p: auth.Principal = Depends(auth.current_principal), db: Session = Depends(get_db)
+):
+    """Hosted checkout with the chosen payment strategy. A running trial is carried over:
+    paid billing starts when it ends."""
+    method = payments.get(body.method)
+    trial_until = billing.trial_carry_over(billing.subscription_for(db, p.account))
+    db.commit()  # subscription_for may have created the row
     return schemas.CheckoutResponse(
-        checkout_url=prov.create_checkout(p.account, body.plan, body.return_url), provider=prov.name
+        checkout_url=method.create_checkout(p.account, body.plan, body.return_url, trial_until), provider=method.name
     )
 
 
@@ -275,45 +293,42 @@ def trial(p: auth.Principal = Depends(auth.current_principal), db: Session = Dep
     return billing.entitlements(db, p.account)
 
 
+@api.get("/billing/cancel/preview", response_model=schemas.RefundPreview, tags=["billing"])
+def cancel_preview(p: auth.Principal = Depends(auth.current_principal), db: Session = Depends(get_db)):
+    """What cancelling right now would refund (the account screen shows it before confirming)."""
+    return billing.refund_preview(db, p.account)[0]
+
+
+@api.post("/billing/cancel", response_model=schemas.CancelResult, tags=["billing"])
+def cancel_subscription(p: auth.Principal = Depends(auth.current_principal), db: Session = Depends(get_db)):
+    """End the paid membership now and refund: subscriptions get the unused share of the
+    period back, Lifetime the flat REFUND_LIFETIME."""
+    return billing.cancel(db, p.account)
+
+
+@api.get("/billing/payments", response_model=list[schemas.PaymentOut], tags=["billing"])
+def payment_history(p: auth.Principal = Depends(auth.current_principal), db: Session = Depends(get_db)):
+    """This account's charges, failures and refunds (newest first)."""
+    return [billing.payment_out(row) for row in billing.list_payments(db, p.account)]
+
+
+@api.post("/billing/manage", response_model=schemas.ManageResponse, tags=["billing"])
+def manage_subscription(
+    body: schemas.ManageRequest, p: auth.Principal = Depends(auth.current_principal), db: Session = Depends(get_db)
+):
+    """The provider's self-service page (payment method, invoices) for this subscription."""
+    url, provider = billing.manage_url(db, p.account, body.return_url)
+    return schemas.ManageResponse(url=url, provider=provider)
+
+
 @api.post("/billing/webhooks/{provider_name}", tags=["billing"])
 async def webhook(provider_name: str, request: Request, db: Session = Depends(get_db)):
-    if provider_name != config.BILLING_PROVIDER:
+    """Provider → us. The strategy named in the path authenticates the delivery and translates
+    it; billing.apply_webhook updates the subscription row (idempotent per event id)."""
+    method = next((m for m in payments.enabled() if m.name == provider_name), None)
+    if method is None or not method.is_configured():
         raise HTTPException(status_code=404, detail="Unknown billing provider.")
-    body = await request.body()
-    if not billing.provider().verify_signature(body, request.headers.get("X-Signature")):
-        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
-    try:
-        event = schemas.StubWebhook(**json.loads(body))
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(status_code=422, detail="Malformed webhook payload.") from exc
-    processed = billing.apply_webhook(db, event, provider_name)
-    return {"ok": True, "duplicate": not processed}
-
-
-@api.get("/billing/sandbox", response_class=HTMLResponse, include_in_schema=False)
-def sandbox_checkout(account_id: str, plan: str, return_url: str = "/"):
-    """Stand-in for the provider's hosted checkout page (dev/staging only)."""
-    if config.ENV == "prod":
-        raise HTTPException(status_code=404)
-    confirm = "/api/v1/billing/sandbox/confirm?" + urlencode(
-        {"account_id": account_id, "plan": plan, "return_url": return_url}
-    )
-    return f"""<!doctype html><meta charset=utf-8><title>Sandbox checkout</title>
-<body style="font-family:system-ui;max-width:460px;margin:60px auto;line-height:1.5">
-<h2>Sandbox checkout</h2><p>This stands in for the payment provider's hosted page. No card is charged.</p>
-<p>Plan: <strong>{plan}</strong></p>
-<form method="post" action="{confirm}"><button style="padding:10px 18px;font-size:16px">Pay (sandbox)</button></form>
-<p><a href="{return_url}">Cancel</a></p></body>"""
-
-
-@api.post("/billing/sandbox/confirm", include_in_schema=False)
-def sandbox_confirm(account_id: str, plan: str, return_url: str = "/", db: Session = Depends(get_db)):
-    if config.ENV == "prod":
-        raise HTTPException(status_code=404)
-    body = billing.webhook_body_for_sandbox(account_id, plan, f"evt_{uuid.uuid4().hex}")
-    event = schemas.StubWebhook(**json.loads(body))
-    billing.apply_webhook(db, event, "stub")
-    return RedirectResponse(url=return_url, status_code=303)
+    return billing.receive_webhook(db, method, await request.body(), request.headers)
 
 
 # ==================== Sync (ciphertext relay) ====================
@@ -427,6 +442,59 @@ def release_history(channel: str = "stable", limit: int = Query(default=20, le=1
     ]
 
 
+# ==================== Sponsored content (anonymous, first-party) ====================
+# No authentication on purpose: the client never sends its token here, so a creative request
+# cannot be tied to an account. Paid memberships ("ad_free") do not call these at all.
+
+
+@api.get("/ads/serve", response_model=schemas.AdServeResponse, tags=["ads"])
+def ads_serve(
+    request: Request,
+    region: str | None = Query(
+        default=None,
+        max_length=2,
+        description="Coarse region chosen on the device (ISO 3166-1 alpha-2). 'ZZ' = the user chose no region.",
+    ),
+    lang: str | None = Query(
+        default=None, max_length=35, description="Language (BCP 47); only the primary tag is used"
+    ),
+    db: Session = Depends(get_db),
+):
+    """Creatives for this context — contextual selection only (region, language), nothing about the viewer."""
+    if not ads.SERVE_LIMITER.allow(request.client.host if request.client else None):
+        raise HTTPException(status_code=429, detail="Too many requests.")
+    chosen = ads.normalize_region(region)
+    if chosen is None and config.ADS_REGION_HEADER:
+        # Operator-enabled fallback (edge country header), only when the client said nothing. Not stored.
+        chosen = ads.normalize_region(request.headers.get(config.ADS_REGION_HEADER))
+    return ads.serve(db, chosen, ads.normalize_language(lang))
+
+
+@api.post("/ads/metrics", response_model=schemas.AdEventsResponse, tags=["ads"])
+def ads_metrics(body: schemas.AdEventsRequest, request: Request, db: Session = Depends(get_db)):
+    """Anonymous impression/click counts: added to a per-day, per-region total. Nothing else is recorded."""
+    if not ads.METRICS_LIMITER.allow(request.client.host if request.client else None):
+        raise HTTPException(status_code=429, detail="Too many requests.")
+    return schemas.AdEventsResponse(accepted=ads.record_events(db, body.events))
+
+
+@api.get("/ads/fake/{name}.js", include_in_schema=False)
+def ads_fake_script(name: str):
+    """Built-in fake provider tags (AdSense / Microsoft / network script) — dev and test only."""
+    script = ad_sources.fake_script(name) if config.ADS_FAKE_PROVIDERS else None
+    if script is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(script, media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
+@api.get("/ads/fake/network.json", include_in_schema=False)
+def ads_fake_network(region: str = "ZZ", lang: str = ""):
+    """What the fake third-party network answers (the server-to-server call uses the same data)."""
+    if not config.ADS_FAKE_PROVIDERS:
+        raise HTTPException(status_code=404, detail="Not found")
+    return ad_sources.fake_network_payload(ads.normalize_region(region) or "ZZ", ads.normalize_language(lang) or "")
+
+
 # ==================== Meta ====================
 
 
@@ -444,8 +512,24 @@ def health():
 
 
 api.include_router(admin.router)
+api.include_router(fakes.router)  # built-in Stripe/PayPal stand-ins (404 unless BILLING_FAKE_PROVIDERS)
 app.include_router(api)
 docs_gate.install(app)  # /api/docs · /api/redoc · /api/openapi.json
+
+
+# ==================== Optional: serve the separate ad-admin dashboard ====================
+# The dashboard (apps/ads-admin) is its own deployment (static files, own container/CDN) and
+# talks to this API across origins. For single-process setups it can also be served from here.
+if config.ADS_ADMIN_DIST and config.ADS_ADMIN_DIST.is_dir():
+
+    class AdsAdminStatic(StaticFiles):
+        async def get_response(self, path: str, scope):
+            response = await super().get_response(path, scope)
+            response.headers["Cache-Control"] = "no-cache"
+            response.headers["X-Frame-Options"] = "DENY"
+            return response
+
+    app.mount("/ads-admin", AdsAdminStatic(directory=config.ADS_ADMIN_DIST, html=True), name="ads-admin")
 
 
 # ==================== Legacy paths (previous app versions) ====================

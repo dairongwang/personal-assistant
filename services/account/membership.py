@@ -11,9 +11,9 @@ they ask the strategy:
 
 | Type        | Who                                   | Active tasks | Features                        |
 |-------------|---------------------------------------|--------------|---------------------------------|
-| anonymous   | no account (local-only)               | 3            | local app only                  |
+| anonymous   | no account (local-only)               | 3            | local app only (sponsored panel)|
 | free        | account, no paid subscription         | 3            | + devices, trial, upgrade       |
-| paid        | Pro (trial/active/grace) or Lifetime  | unlimited    | + sync, vault, push, calendar … |
+| paid        | Pro (trial/active/grace) or Lifetime  | unlimited    | + sync, vault, push, ad_free …  |
 | admin       | role = admin (production support)     | unlimited    | everything paid has + admin API |
 
 The PWA mirrors this table in ``apps/web/src/app/core/membership/membership.ts`` (the client
@@ -31,7 +31,9 @@ import schemas
 
 MembershipType = str  # "anonymous" | "free" | "paid" | "admin"
 
-PAID_FEATURES: tuple[str, ...] = ("sync", "vault", "push", "calendar_feed", "insights_full")
+# "ad_free": no sponsored-content panel (docs/ADVERTISING.md). Anonymous and free memberships
+# see first-party, contextual sponsored content; it is part of what Pro buys.
+PAID_FEATURES: tuple[str, ...] = ("sync", "vault", "push", "calendar_feed", "insights_full", "ad_free")
 
 
 class MembershipStrategy:

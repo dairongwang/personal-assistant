@@ -8,7 +8,7 @@
 //   az group create -n pa-prod -l westeurope
 //   az deployment group create -g pa-prod -f infra/azure/main.bicep \
 //        -p pgPassword=$PG_PASSWORD tokenSecret=$TOKEN_SECRET releaseAdminToken=$RELEASE_ADMIN_TOKEN \
-//           billingWebhookSecret=$BILLING_WEBHOOK_SECRET containerImage=ghcr.io/you/personal-assistant:1.0.0
+//           stripeSecretKey=… stripeWebhookSecret=… containerImage=ghcr.io/you/personal-assistant:1.0.0
 //
 // Secrets are passed as secure parameters and end up as Container App secrets; for a fuller
 // setup put them in Key Vault and reference them from here.
@@ -25,11 +25,34 @@ param pgPassword string
 param tokenSecret string
 @secure()
 param releaseAdminToken string
+// Payment methods (docs/DEPLOYMENT.md "Payments"). A provider is offered once its secret(s) and
+// at least one price/plan id are set; leave empty to not offer it. Price/plan ids are not secrets.
 @secure()
-param billingWebhookSecret string
+param stripeSecretKey string = ''
+@secure()
+param stripeWebhookSecret string = ''
+// Prices (decimal strings in billingCurrency) and the flat Lifetime refund (docs/DEPLOYMENT.md "Payments").
+param billingCurrency string = 'USD'
+param priceProMonthly string = '1.00'
+param priceProYearly string = '10.00'
+param priceLifetime string = '20.00'
+param refundLifetime string = '10.00'
+@secure()
+param paypalClientSecret string = ''
+param paypalClientId string = ''
+param paypalWebhookId string = ''
+param paypalPlanProMonthly string = ''
+param paypalPlanProYearly string = ''
 param appEnv string = 'prod'
 // Comma-separated e-mails that become administrators when they register/sign in (docs/MEMBERSHIP.md).
 param adminEmails string = ''
+// Sponsored content for free memberships (docs/ADVERTISING.md): kill switch and the first-party
+// hosts creative images may be loaded from (empty = text-only creatives).
+param adsEnabled bool = true
+param adsImageHosts string = ''
+// Ad source (internal | sponsored | affiliate | adsense | microsoft | network) — README "Testing each
+// advertisement source". Provider credentials go into the container's environment the same way.
+param adsSource string = 'sponsored'
 
 var pgAdmin = 'assistant'
 var dbName = 'assistant'
@@ -88,7 +111,9 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'database-url', value: 'postgresql+psycopg://${pgAdmin}:${pgPassword}@${postgres.properties.fullyQualifiedDomainName}:5432/${dbName}?sslmode=require' }
         { name: 'token-secret', value: tokenSecret }
         { name: 'release-admin-token', value: releaseAdminToken }
-        { name: 'billing-webhook-secret', value: billingWebhookSecret }
+        { name: 'stripe-secret-key', value: stripeSecretKey }
+        { name: 'stripe-webhook-secret', value: stripeWebhookSecret }
+        { name: 'paypal-client-secret', value: paypalClientSecret }
       ]
     }
     template: {
@@ -103,8 +128,23 @@ resource api 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'DATABASE_URL', secretRef: 'database-url' }
             { name: 'TOKEN_SECRET', secretRef: 'token-secret' }
             { name: 'RELEASE_ADMIN_TOKEN', secretRef: 'release-admin-token' }
-            { name: 'BILLING_WEBHOOK_SECRET', secretRef: 'billing-webhook-secret' }
+            { name: 'STRIPE_SECRET_KEY', secretRef: 'stripe-secret-key' }
+            { name: 'STRIPE_WEBHOOK_SECRET', secretRef: 'stripe-webhook-secret' }
+            { name: 'BILLING_CURRENCY', value: billingCurrency }
+            { name: 'PRICE_PRO_MONTHLY', value: priceProMonthly }
+            { name: 'PRICE_PRO_YEARLY', value: priceProYearly }
+            { name: 'PRICE_LIFETIME', value: priceLifetime }
+            { name: 'REFUND_LIFETIME', value: refundLifetime }
+            { name: 'PAYPAL_ENV', value: appEnv == 'prod' ? 'live' : 'sandbox' }
+            { name: 'PAYPAL_CLIENT_ID', value: paypalClientId }
+            { name: 'PAYPAL_CLIENT_SECRET', secretRef: 'paypal-client-secret' }
+            { name: 'PAYPAL_WEBHOOK_ID', value: paypalWebhookId }
+            { name: 'PAYPAL_PLAN_PRO_MONTHLY', value: paypalPlanProMonthly }
+            { name: 'PAYPAL_PLAN_PRO_YEARLY', value: paypalPlanProYearly }
             { name: 'ADMIN_EMAILS', value: adminEmails }
+            { name: 'ADS_ENABLED', value: adsEnabled ? 'true' : 'false' }
+            { name: 'ADS_IMAGE_HOSTS', value: adsImageHosts }
+            { name: 'ADS_SOURCE', value: adsSource }
           ]
           probes: [
             { type: 'Liveness', httpGet: { path: '/api/v1/health', port: 8000 }, periodSeconds: 30 }

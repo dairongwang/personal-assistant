@@ -14,7 +14,7 @@ management · Deployment & automated testing
 > version-controlled migrations (SQLite-wasm/OPFS from §2.1 can replace it behind the same
 > repository layer when native shells arrive). The Account Service (`services/account`, FastAPI +
 > PostgreSQL) implements auth (§3.2 with PBKDF2/HKDF pinned in `kdf_params`, Argon2id can be
-> swapped in), devices, entitlements, a stub billing provider behind the §1 adapter, the
+> swapped in), devices, entitlements, Stripe and PayPal payment strategies behind the §1 adapter, the
 > encrypted op-log relay with ack-based deletion (§4.3), the opt-in vault (§4.4, **on by
 > default** because the product requirement is "server is master") and release manifests.
 > Sync ordering is **server-assigned `seq`, last writer by seq wins** rather than HLC — simpler,
@@ -77,7 +77,7 @@ The remaining decisions:
 | **Pro** | ~$4/mo or ~$36/yr; 14-day trial | Encrypted multi-device sync, web-push reminders, calendar subscription URL, insights history >90 days, priority support | Everything that needs the company's servers or ongoing cost |
 | Lifetime (optional) | ~$99 one-off | Pro forever | Popular in this category (Things, Obsidian); cash-flow vs. ongoing server cost — decide at launch |
 
-Feature gating is by **entitlement claims** (`features: ["sync","push","calendar_feed","insights_full"]`)
+Feature gating is by **entitlement claims** (`features: ["sync","push","calendar_feed","insights_full","ad_free"]`)
 so tiers can change without client releases.
 
 ### 1.2 Payment provider investigation
@@ -305,6 +305,7 @@ the Capacitor plugin); in browsers it relies on OS user-profile isolation (docum
 | **Billing** | customer/subscription ids, plan, status, period | Account Service + provider | Company, provider |
 | **Operational** | rate-limit counters (24 h), error traces (scrubbed), aggregate metrics | Account Service | Company |
 | **Telemetry** | feature usage | **None by default.** Opt-in, aggregate counts only, no identifiers | — |
+| **Sponsored content** | our campaigns; views/clicks per ad × day × country; the active ad source (operator setting) | Account Service — anonymous totals only, no identifiers by construction (`ADVERTISING.md`). Third-party ad sources (AdSense, Microsoft, network tags) run only after the user's consent in the panel | Company |
 
 ### 4.2 Local data model (client SQLite)
 

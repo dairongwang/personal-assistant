@@ -93,9 +93,8 @@ import {
             <option value="paid">Pro</option>
             <option value="admin">Administrators</option>
           </select>
-          <button class="btn" type="submit" [disabled]="busy()" appTip="Run the search.">
-            Search
-          </button>
+          <!-- Never disabled: a disabled default button would also swallow Enter in the search field. -->
+          <button class="btn" type="submit" appTip="Run the search.">Search</button>
         </div>
 
         <ul class="admin-list" id="admin-accounts">
@@ -259,6 +258,18 @@ import {
           >
             Refresh
           </button>
+          @if (stats()?.ads_admin_url; as url) {
+            <a
+              class="btn"
+              id="link-ads-admin"
+              [href]="url"
+              target="_blank"
+              rel="noopener noreferrer"
+              appTip="Advertising (campaigns, ad source, analytics, privacy & compliance) is managed in the separate ads admin console. Opens in a new tab; sign in there with your administrator account."
+            >
+              Ads admin console ↗
+            </a>
+          }
           <span class="spacer"></span>
           <button class="btn" type="button" (click)="dialog().close()" appTip="Close this window.">
             Close
@@ -303,9 +314,13 @@ export class AdminDialog {
     });
   }
 
+  private searchSeq = 0;
+
   async search() {
+    const seq = ++this.searchSeq; // a newer search supersedes this one: ignore a late answer
     await this.guard(async () => {
       const page = await this.admin.accounts(this.query.trim(), this.filter);
+      if (seq !== this.searchSeq) return;
       this.accounts.set(page.items);
       this.total.set(page.total);
       this.loaded.set(true);

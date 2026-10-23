@@ -3,16 +3,21 @@
 Only what billing and multi-device sync strictly need (PLATFORM_DESIGN.md §1.4). No content:
 ``sync_ops.ciphertext`` / ``sync_snapshots.ciphertext`` are opaque bytes encrypted on the
 user's device with a key the server never sees. ``tests/test_privacy.py`` guards this list.
+
+The sponsored-content tables (``ad_campaigns``, ``ad_daily_stats``) hold *our* creatives and
+anonymous daily totals — by design there is no column that could identify a user, device or
+request (no account id, device id, IP address, user agent, timestamp per event).
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Index,
@@ -113,6 +118,38 @@ class Subscription(Base):
     updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow)
 
 
+class Payment(Base):
+    """One charge at the provider (and what became of it): the ledger behind the account
+    screen's payment history, the refund on cancellation and the failure notices. Money is kept
+    in minor units (cents) with its currency; never card data."""
+
+    __tablename__ = "payments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    account_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("accounts.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    # Stripe payment intent / charge, PayPal capture / sale — what a refund is issued against.
+    provider_payment_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    plan: Mapped[str] = mapped_column(String(32), nullable=False)  # pro_monthly | pro_yearly | lifetime
+    amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    # succeeded | failed | refunded | partially_refunded
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="succeeded")
+    refunded_cents: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    refund_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    refunded_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    failure_reason: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # The period this payment bought (subscriptions) — the basis of a prorated refund.
+    period_start: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    paid_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (UniqueConstraint("provider", "provider_payment_id", name="uq_payment_provider_id"),)
+
+
 class BillingEvent(Base):
     __tablename__ = "billing_events"
 
@@ -195,3 +232,69 @@ class Release(Base):
     published_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
 
     __table_args__ = (UniqueConstraint("channel", "version", name="uq_release_channel_version"),)
+
+
+# ==================== Sponsored content (docs/ADVERTISING.md) ====================
+
+AD_STATUSES = ("draft", "active", "paused", "archived")
+# First-party creative kinds (ad_sources.py): house promotions, paid sponsored messages, affiliate links.
+AD_KINDS = ("internal", "sponsored", "affiliate")
+
+
+class AppSetting(Base):
+    """Small key/value store for operator settings changed at runtime from the admin panel
+    (today: the active ad source). Operator data, never user data."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class AdCampaign(Base):
+    """One creative we show to free memberships. Text-first; the optional image is hosted by us.
+    Targeting is *contextual only*: a list of regions (ISO 3166-1 alpha-2 codes or region
+    groups, empty = everywhere) and languages (primary subtags, empty = any)."""
+
+    __tablename__ = "ad_campaigns"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, default="sponsored")  # AD_KINDS
+    sponsor: Mapped[str] = mapped_column(String(80), nullable=False)
+    headline: Mapped[str] = mapped_column(String(90), nullable=False)
+    blurb: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    cta_label: Mapped[str] = mapped_column(String(30), nullable=False, default="Learn more")
+    target_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    image_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    regions: Mapped[str] = mapped_column(String(1000), nullable=False, default="")  # "DE,AT,CH" / "EU" / ""
+    languages: Mapped[str] = mapped_column(String(200), nullable=False, default="")  # "de,en" / ""
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
+    weight: Mapped[int] = mapped_column(Integer, nullable=False, default=10)  # relative share in rotation
+    starts_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    ends_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    max_impressions: Mapped[int | None] = mapped_column(Integer, nullable=True)  # budget cap, None = unlimited
+    impressions_total: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    clicks_total: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_by: Mapped[str | None] = mapped_column(String(36), nullable=True)  # administrator's account id
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(UTCDateTime, nullable=False, default=utcnow, onupdate=utcnow)
+
+
+class AdDailyStat(Base):
+    """Anonymous aggregate: how often a creative was seen/clicked per day and coarse region.
+    There is deliberately nothing else — no who, no when within the day, no from-where-exactly."""
+
+    __tablename__ = "ad_daily_stats"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    ad_id: Mapped[str] = mapped_column(String(36), ForeignKey("ad_campaigns.id", ondelete="CASCADE"), nullable=False)
+    day: Mapped[date] = mapped_column(Date, nullable=False)
+    region: Mapped[str] = mapped_column(String(2), nullable=False, default="ZZ")  # ISO alpha-2; ZZ = unknown/none
+    impressions: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    clicks: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("ad_id", "day", "region", name="uq_ad_daily_stat"),
+        Index("ix_ad_daily_stats_day", "day"),
+    )

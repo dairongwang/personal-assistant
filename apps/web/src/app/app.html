@@ -359,12 +359,27 @@
           </div>
         </section>
       }
+
+      <!-- Sponsored content (free memberships only): last in the sidebar, part of the page flow. -->
+      <app-ad-panel (why)="openAdInfo()" (upgrade)="openAccount()" />
     </aside>
   </main>
   <p class="footer muted small">
     v{{ version }} · your data stays on this device{{
       account.signedIn() ? ' · synced end-to-end encrypted' : ''
     }}
+    @if (!membership.adFree()) {
+      ·
+      <button
+        class="link"
+        id="footer-ad-info"
+        type="button"
+        (click)="openAdInfo()"
+        appTip="How sponsored content is chosen, what is (not) collected, and where to turn it off."
+      >
+        sponsored content{{ ads.enabled() ? '' : ': off' }}
+      </button>
+    }
   </p>
 </div>
 
@@ -384,6 +399,7 @@
 <app-update-dialog />
 <app-account-dialog />
 <app-admin-dialog />
+<app-ad-info-dialog (upgrade)="openAccount()" />
 <app-forced-update />
 
 <!-- popover="manual" puts these in the top layer so they show above open dialogs. -->

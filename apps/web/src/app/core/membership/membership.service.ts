@@ -34,5 +34,7 @@ export class MembershipService {
   readonly type = computed(() => this.strategy().type);
   readonly label = computed(() => this.strategy().label);
   readonly isAdmin = computed(() => this.strategy().canUse('admin'));
+  /** No sponsored-content panel for this membership (paid/admin). */
+  readonly adFree = computed(() => this.strategy().canUse('ad_free'));
   readonly canUpgrade = computed(() => this.strategy().canUpgrade);
 }

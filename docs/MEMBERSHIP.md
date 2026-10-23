@@ -6,9 +6,9 @@ them, and no `if (plan === 'pro')` anywhere else in the code.
 
 | Type | Who | Active tasks | What you get |
 |---|---|---|---|
-| **anonymous** | No account — the default. Data lives in the browser's IndexedDB only. | **3** | The whole local app: tasks, events, today view, updates |
+| **anonymous** | No account — the default. Data lives in the browser's IndexedDB only. | **3** | The whole local app: tasks, events, today view, updates. Shows the small *Sponsored* panel ([ADVERTISING.md](ADVERTISING.md)) |
 | **free** | An account without a paid subscription | **3** | Same as anonymous, plus: device list, free 14-day Pro trial, subscribe, manageable by support |
-| **paid** | Pro (trial, active, or in the dunning/offline grace period) and Lifetime | **unlimited** | Full features: unlimited active tasks, end-to-end-encrypted sync, encrypted backup (vault), push, calendar feed, full insights |
+| **paid** | Pro (trial, active, or in the dunning/offline grace period) and Lifetime | **unlimited** | Full features: unlimited active tasks, end-to-end-encrypted sync, encrypted backup (vault), push, calendar feed, full insights, **no sponsored content** (`ad_free`) |
 | **admin** | Accounts with `role = admin` — developers/managers doing production support | **unlimited** | Everything *paid* has, plus the **Admin** panel and `/api/v1/admin/*` |
 
 "Active" means a task whose status is *To do* or *In progress* — what the dashboard counts as
@@ -159,6 +159,9 @@ Anonymous mode needs no fixture — open the app without signing in.
 | Where | What |
 |---|---|
 | `services/account/tests/test_membership.py` | strategy behaviour, resolution from role + billing, catalogue, feature gating, `ADMIN_EMAILS`, release publishing by admins |
+| `services/account/tests/test_billing.py` · `test_payments.py` · `test_refunds.py` · `test_fakes.py` | the entitlement model (trial, neutral payment events, idempotency, grace periods, canceled-but-paid periods); the payment strategies (`payments.py`): priced plan catalogue, Stripe and PayPal checkout (incl. trial carry-over) + webhook lifecycles against a recorded HTTP transport; refunds on cancellation for monthly / yearly / Lifetime (prorated arithmetic, provider calls, refused refunds, partial refunds), the payments ledger and failure handling from every provider event; the built-in provider fakes driving checkout → pay → webhooks → cancel + refund / manage / fail / recover / decline / dashboard refund, and the seeded paid accounts |
+| `services/account/tests/test_payment_analytics.py` · `e2e/test_payments_admin.py` | the administrators' payment dashboard: KPIs and trend, breakdowns, top customers, refunds, filters, KPI alerts, drill-down, CSV, admin-only; in a real browser after purchases/refunds through the fakes |
+| `e2e/test_billing.py` | real browser: priced plan picker → Stripe (fake) → Pro → cancel with the quoted prorated refund → failed renewal (past due: failure notice, pay button + plan picker) → recovery → refund from the dashboard; trial → PayPal (trial carried over) → cancel keeps the free days; Lifetime → cancel membership refunds the flat amount; declined PayPal payment; abandoned checkout |
 | `services/account/tests/test_admin.py` | stats, search, grant/revoke with audit, promote/demote, sign-out-everywhere, purge, seeded admin managing seeded users |
 | `services/account/tests/test_seed.py` | every fake account signs in and resolves to the documented membership; idempotency; prod refusal; crypto known-answer test |
 | `services/account/tests/test_privacy.py` | `audit_log` allow-listed; `/admin/*` responses contain no ciphertext |

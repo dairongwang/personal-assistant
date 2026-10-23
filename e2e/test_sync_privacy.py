@@ -53,8 +53,14 @@ def test_two_devices_sync_and_nothing_readable_leaves_them(browser, server, rele
         d.click("#task-dialog button[type=submit]")
         d.wait_for_timeout(300)
     assert titles(d) == sorted(SECRET_TITLES)
-    # Without an account the only API call is the release manifest.
-    assert {e for e in endpoints if "/api/" in e[1]} == {("GET", "/api/v1/release/manifest")}
+    # Without an account the only API calls are the release manifest and the anonymous
+    # sponsored-content requests (no token, no content — the leak check above covers them too).
+    assert ("GET", "/api/v1/release/manifest") in endpoints
+    assert {e for e in endpoints if "/api/" in e[1]} <= {
+        ("GET", "/api/v1/release/manifest"),
+        ("GET", "/api/v1/ads/serve"),
+        ("POST", "/api/v1/ads/metrics"),
+    }
 
     # Create the account on the desktop: local data is adopted and uploaded encrypted.
     d.click("#btn-register")

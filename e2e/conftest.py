@@ -43,6 +43,9 @@ def _venv_python() -> str:
 
 
 TMP_RELEASE = Path(tempfile.mkdtemp(prefix="pa-e2e-release-")) / "release.json"
+# The ads admin console gets its own origin (separate deployment); chosen up front so the API
+# can allow it in CORS_ORIGINS.
+ADS_ADMIN_PORT = _free_port()
 
 
 def build_web(release_file: Path | None = None) -> None:
@@ -74,6 +77,11 @@ def server(release_json):
         "RELEASE_ADMIN_TOKEN": ADMIN_TOKEN,
         "WEB_DIST": str(DIST),
         "SEED_FAKE_ACCOUNTS": "true",  # free@/pro@/admin@example.com … (services/account/seed.py)
+        "ADS_MAX_PER_RESPONSE": "20",  # every matching dummy campaign in one batch (e2e/test_ads.py)
+        "ADS_AFFILIATE_TAG": "tag=e2e-21",  # e2e/test_ad_sources.py checks the appended affiliate tag
+        "ADS_ADMIN_DIST": str(ROOT / "apps" / "ads-admin"),  # the separate console, mounted at /ads-admin/
+        # … and reachable on its own origin too (ads_admin_origin fixture) — the real deployment shape.
+        "CORS_ORIGINS": f"http://127.0.0.1:{ADS_ADMIN_PORT}",
     }
     proc = subprocess.Popen(
         [
@@ -139,6 +147,36 @@ class Releaser:
         )
         assert urllib.request.urlopen(req).status == 201
         return rel
+
+
+@pytest.fixture(scope="session")
+def ads_admin_origin(server):
+    """The ads admin console served as its own deployment: separate origin, separate process
+    (apps/ads-admin/serve.py — the same files the nginx image ships), talking to the API via CORS."""
+    proc = subprocess.Popen(
+        [
+            _venv_python(),
+            str(ROOT / "apps" / "ads-admin" / "serve.py"),
+            "--port",
+            str(ADS_ADMIN_PORT),
+            "--api",
+            server,
+        ],
+        cwd=str(ROOT / "apps" / "ads-admin"),
+    )
+    base = f"http://127.0.0.1:{ADS_ADMIN_PORT}"
+    for _ in range(50):
+        try:
+            urllib.request.urlopen(base + "/config.js", timeout=1)
+            break
+        except Exception:
+            time.sleep(0.2)
+    else:
+        proc.kill()
+        raise RuntimeError("ads admin console did not start")
+    yield base
+    proc.terminate()
+    proc.wait(10)
 
 
 @pytest.fixture(scope="session")

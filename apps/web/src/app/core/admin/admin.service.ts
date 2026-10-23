@@ -15,6 +15,8 @@ export interface AdminStats {
   latest_release: string | null;
   service_version: string;
   database: string;
+  /** The separate ads admin console (apps/ads-admin); "" = not configured. */
+  ads_admin_url: string;
 }
 
 export interface AdminAccount {
@@ -110,4 +112,8 @@ export class AdminService {
   audit(limit = 100) {
     return this.api.get<AdminAuditEntry[]>(`/admin/audit?limit=${limit}`);
   }
+
+  // Advertising (campaigns, ad source, analytics, compliance) is deliberately NOT managed from
+  // the user app: it lives in the separate ads admin console (apps/ads-admin), which talks to
+  // /admin/ads/* directly. The admin dialog only links there (AdminStats.ads_admin_url).
 }

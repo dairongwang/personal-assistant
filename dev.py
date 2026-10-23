@@ -7,17 +7,20 @@ Standard library only; always runs tools from the project's own environments
     python dev.py setup            create the venv, install Python + npm dependencies
     python dev.py db [cmd]         local PostgreSQL: init [--port N] | start | stop | status | upgrade | revision "msg"
                                    (init picks a free port by itself when 5432 belongs to another server)
-    python dev.py run              API (auto-reload) + Angular dev server with /api proxy
-                                   (uses the local PostgreSQL if it is running, otherwise SQLite;
-                                   creates the fake test accounts — SEED_FAKE_ACCOUNTS=false to skip)
+    python dev.py run              API (auto-reload) + Angular dev server with /api proxy + the ads admin
+                                   console on http://localhost:4300/ (uses the local PostgreSQL if it is
+                                   running, otherwise SQLite; creates the fake test accounts and dummy
+                                   campaigns — SEED_FAKE_ACCOUNTS=false to skip)
     python dev.py seed             (re)create the fake test accounts: free@ / trial@ / pro@ / lifetime@ /
                                    pastdue@ / expired@ / admin@example.com  (services/account/seed.py)
+                                   and the dummy sponsored-content campaigns (docs/ADVERTISING.md)
+    python dev.py seed --ads       only the dummy campaigns (add --force when APP_ENV=prod)
     python dev.py promote <email>  give an existing account the administrator role (demote: --demote)
     python dev.py stop             kill leftover API / dev-server processes from a previous run
     python dev.py serve            production build of the PWA served by the API (service worker on,
                                    reachable from phones on your network)
     python dev.py build            production build of the PWA (apps/web/dist)
-    python dev.py test             Python unit tests (SQLite) + Angular unit tests
+    python dev.py test             Python unit tests (SQLite) + Angular unit tests + ads-admin node tests
     python dev.py test --postgres  same, with the API tests against TEST_DATABASE_URL / local db
     python dev.py e2e              end-to-end tests in a real browser (updates, sync, privacy) — uses any
                                    browser found: bundled Chromium, Edge, Chrome, Firefox, WebKit
@@ -44,6 +47,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "apps" / "web"
+ADS_ADMIN = ROOT / "apps" / "ads-admin"  # separate advertising console (static, no build)
 SERVICE = ROOT / "services" / "account"
 VENV = SERVICE / "venv"
 E2E = ROOT / "e2e"
@@ -542,12 +546,19 @@ def prepare_environment() -> None:
             save_env_value("TOKEN_SECRET", secrets.token_urlsafe(48))
             print(f"note: APP_ENV={env} needs TOKEN_SECRET — generated one and saved it to {ENV_FILE}", flush=True)
         hints = [
-            f"note: APP_ENV={env}: /api/docs needs an administrator account, the billing sandbox is hidden"
+            f"note: APP_ENV={env}: /api/docs needs an administrator account"
             + (" and the fake test accounts are not created." if env == "prod" else "."),
             "      First administrator: put your e-mail in ADMIN_EMAILS (services/account/.env) before registering,",
             "      or register in the app and run:  python dev.py promote you@example.com",
-            "",
         ]
+        if env == "prod":
+            hints += [
+                "      Sponsored-content dummy campaigns are not seeded and the fake ad providers (AdSense, Microsoft,",
+                "      network) are off, so the dashboard shows no ad. To see the advertisement panel: set APP_ENV=dev",
+                "      in services/account/.env (recommended), or keep prod and set ADS_FAKE_PROVIDERS=true there and",
+                "      run once:  python dev.py seed --ads --force",
+            ]
+        hints.append("")
         print("\n".join(hints), flush=True)
 
 
@@ -570,14 +581,33 @@ def cmd_run(_args: list[str]) -> int:
     require_node_modules()
     check_node()
     api_port, web_port = os.environ.get("PORT", "8000"), os.environ.get("WEB_PORT", "4200")
-    for port in (api_port, web_port):
+    admin_port = os.environ.get("ADS_ADMIN_PORT", "4300")
+    for port in (api_port, web_port, admin_port):
         if port_in_use(port):
             pids = listeners(port)
             sys.exit(
                 f"Port {port} is already in use{f' (PID {pids})' if pids else ''} — probably a previous run.\n"
                 "Stop it first:  python dev.py stop      (or set PORT / WEB_PORT to use other ports)"
             )
-    api = _api("127.0.0.1", api_port, reload=True, extra_env={"DEV_WEB_URL": f"http://localhost:{web_port}/"})
+    api = _api(
+        "127.0.0.1",
+        api_port,
+        reload=True,
+        extra_env={
+            "DEV_WEB_URL": f"http://localhost:{web_port}/",
+            # The ads admin console is a separate origin in development (its own port) → CORS,
+            # and the user app's admin dialog links to it.
+            "CORS_ORIGINS": os.environ.get(
+                "CORS_ORIGINS", f"http://localhost:{admin_port},http://127.0.0.1:{admin_port}"
+            ),
+            "ADS_ADMIN_URL": os.environ.get("ADS_ADMIN_URL", f"http://localhost:{admin_port}/"),
+        },
+    )
+    # Ads admin console: plain static files (no build step) on its own origin, pointed at the API.
+    ads_admin = popen_tree(
+        [sys.executable, str(ADS_ADMIN / "serve.py"), "--port", admin_port, "--api", f"http://localhost:{api_port}"],
+        ADS_ADMIN,
+    )
     # NG_CLI_ANALYTICS=false: on first use the Angular CLI otherwise stops at an interactive
     # "share usage data?" question. --host 127.0.0.1 keeps the address unambiguous (IPv4 vs IPv6).
     web = popen_tree(
@@ -607,6 +637,9 @@ def cmd_run(_args: list[str]) -> int:
                     print(f"\n  API:  http://localhost:{api_port}/api/docs")
                     print(f"  App:  http://localhost:{web_port}/   (or http://127.0.0.1:{web_port}/)")
                     print("        (Angular dev server — no service worker; use `python dev.py serve` to test updates)")
+                    print(
+                        f"  Ads admin console:  http://localhost:{admin_port}/   (admin@example.com / Admin-pass-123)"
+                    )
                     print("  Stop: Ctrl+C\n", flush=True)
                 elif time.time() - started > 180:
                     announced = True
@@ -622,6 +655,7 @@ def cmd_run(_args: list[str]) -> int:
         return 0
     finally:
         kill_tree(web)
+        kill_tree(ads_admin)
         kill_tree(api)
 
 
@@ -653,7 +687,11 @@ def _cleanup_on_termination() -> None:
 def cmd_stop(_args: list[str]) -> int:
     """Kill leftover dev processes (API on PORT, dev server on WEB_PORT) — e.g. after a closed terminal."""
     found = False
-    for port in (os.environ.get("PORT", "8000"), os.environ.get("WEB_PORT", "4200")):
+    for port in (
+        os.environ.get("PORT", "8000"),
+        os.environ.get("WEB_PORT", "4200"),
+        os.environ.get("ADS_ADMIN_PORT", "4300"),
+    ):
         for pid in listeners(port):
             found = True
             print(f"stopping PID {pid} (port {port})")
@@ -707,8 +745,9 @@ def cmd_serve(_args: list[str]) -> int:
         "0.0.0.0",
         port,
         reload=False,
-        extra_env={"WEB_DIST": str(WEB / "dist" / "web" / "browser")},
+        extra_env={"WEB_DIST": str(WEB / "dist" / "web" / "browser"), "ADS_ADMIN_DIST": str(ADS_ADMIN)},
     )
+    print(f"  Ads admin:      http://localhost:{port}/ads-admin/\n")
     try:
         return api.wait()
     except KeyboardInterrupt:
@@ -725,6 +764,11 @@ def cmd_test(args: list[str]) -> int:
     code = run([py, "-m", "pytest", *args], env=env)
     if (WEB / "node_modules").is_dir():
         code = code or run([npm(), "test", "--", "--watch=false"], cwd=WEB)
+    node = shutil.which("node")
+    if node:  # ads admin console helpers (no dependencies)
+        code = code or run(
+            [node, "--test", *sorted(str(p) for p in (ADS_ADMIN / "tests").glob("*.test.mjs"))], cwd=ROOT
+        )
     return code
 
 
@@ -737,7 +781,9 @@ def cmd_e2e(args: list[str]) -> int:
 def cmd_lint(_args: list[str]) -> int:
     py = require_venv()
     code = run([py, "-m", "ruff", "check", "."]) or run([py, "-m", "ruff", "format", "--check", "."])
-    code = code or run([py, "-m", "ruff", "check", str(E2E), str(ROOT / "dev.py")], cwd=ROOT)
+    code = code or run(
+        [py, "-m", "ruff", "check", str(E2E), str(ROOT / "dev.py"), str(ADS_ADMIN / "serve.py")], cwd=ROOT
+    )
     if (WEB / "node_modules").is_dir():
         code = code or run([npm(), "run", "lint"], cwd=WEB)
     return code
@@ -746,7 +792,9 @@ def cmd_lint(_args: list[str]) -> int:
 def cmd_format(_args: list[str]) -> int:
     py = require_venv()
     code = run([py, "-m", "ruff", "check", "--fix", "."]) or run([py, "-m", "ruff", "format", "."])
-    code = code or run([py, "-m", "ruff", "format", str(E2E), str(ROOT / "dev.py")], cwd=ROOT)
+    code = code or run(
+        [py, "-m", "ruff", "format", str(E2E), str(ROOT / "dev.py"), str(ADS_ADMIN / "serve.py")], cwd=ROOT
+    )
     if (WEB / "node_modules").is_dir():
         code = code or run([npm(), "run", "format"], cwd=WEB)
     return code
